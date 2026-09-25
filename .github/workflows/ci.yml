@@ -48,3 +48,37 @@ jobs:
       - name: tip-engine sin dependencias
         run: |
           node -e "const p=require('./packages/tip-engine/package.json'); for (const k of ['dependencies','peerDependencies','optionalDependencies']) { if (p[k] && Object.keys(p[k]).length) { console.error('tip-engine no puede declarar ' + k); process.exit(1); } }"
+
+  # Migraciones y concurrencia contra un PostgreSQL real (misma versión mayor que Neon).
+  # PGlite no puede probarlo: tiene una sola conexión. No toca Neon.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Servidor descartable: los tests crean y borran su propia base temporal.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Tests de migraciones y concurrencia (PostgreSQL 18)
+        run: pnpm test:pg
