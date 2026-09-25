@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:db": "pnpm --filter @propinas/web test:db",
+    "test:pg": "pnpm --filter @propinas/web test:pg",
     "format": "prettier --write --ignore-unknown .",
     "format:check": "prettier --check --ignore-unknown .",
     "prisma": "pnpm --filter @propinas/web exec prisma"
