@@ -266,6 +266,9 @@ BEGIN
     IF parent_status IS DISTINCT FROM 'DRAFT' THEN
       RAISE EXCEPTION 'IMMUTABLE: advances can only be applied while the daily distribution is being closed (DRAFT)';
     END IF;
+    IF EXISTS (SELECT 1 FROM advances a WHERE a.id = NEW.advance_id AND a.status = 'VOIDED') THEN
+      RAISE EXCEPTION 'RULE: a VOIDED advance cannot be applied (advance %)', NEW.advance_id;
+    END IF;
     IF NEW.reverted_at IS NOT NULL THEN
       RAISE EXCEPTION 'RULE: an advance application must be created active (reverted_at NULL)';
     END IF;
@@ -287,25 +290,67 @@ CREATE TRIGGER trg_advance_applications_guard
   BEFORE INSERT OR UPDATE OR DELETE ON advance_applications
   FOR EACH ROW EXECUTE FUNCTION fn_advance_applications_guard();
 
+-- advances: never deleted (they are voided). VOIDED is final. While the advance has active
+-- applications (reverted_at NULL) its identity and amount are frozen and it cannot be voided: the
+-- distributions that consumed it must be voided first (which reverts the applications).
+-- applied_cents / status keep changing at each close.
+CREATE FUNCTION fn_advances_guard() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'TRUNCATE' THEN
+    RAISE EXCEPTION 'IMMUTABLE: advances cannot be deleted (void them instead)';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'IMMUTABLE: advances cannot be deleted (void them instead) (id %)', OLD.id;
+  END IF;
+
+  IF OLD.status = 'VOIDED' THEN
+    IF (to_jsonb(OLD) - 'updated_at') IS DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
+      RAISE EXCEPTION 'IMMUTABLE: a VOIDED advance cannot be modified (id %)', OLD.id;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM advance_applications ap
+             WHERE ap.advance_id = OLD.id AND ap.reverted_at IS NULL) THEN
+    IF (OLD.restaurant_id, OLD.employee_id, OLD.date, OLD.amount_cents)
+       IS DISTINCT FROM
+       (NEW.restaurant_id, NEW.employee_id, NEW.date, NEW.amount_cents) THEN
+      RAISE EXCEPTION 'IMMUTABLE: an advance with active applications cannot change its employee, date or amount (id %)', OLD.id;
+    END IF;
+    IF NEW.status = 'VOIDED' THEN
+      RAISE EXCEPTION 'RULE: an advance with active applications cannot be voided; void the distributions that consumed it first (id %)', OLD.id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_advances_guard
+  BEFORE UPDATE OR DELETE ON advances
+  FOR EACH ROW EXECUTE FUNCTION fn_advances_guard();
+
+CREATE TRIGGER trg_advances_no_truncate
+  BEFORE TRUNCATE ON advances
+  FOR EACH STATEMENT EXECUTE FUNCTION fn_advances_guard();
+
 -- -----------------------------------------------------------------------------
 -- 5. Triggers: liquidación semanal y sobres
 -- -----------------------------------------------------------------------------
 
+-- OPEN: editable. CLOSED: frozen (the only allowed change is CLOSED -> VOIDED, which may only
+-- fill voided_at / voided_by / void_reason). VOIDED: frozen.
 CREATE FUNCTION fn_weekly_settlements_guard() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'IMMUTABLE: weekly settlements cannot be deleted (void them instead)';
   END IF;
 
-  -- Once left OPEN, period, revision and totals are frozen.
-  IF OLD.status <> 'OPEN' AND
-     (OLD.restaurant_id, OLD.week_start, OLD.week_end, OLD.revision, OLD.supersedes_settlement_id,
-      OLD.total_cents, OLD.total_advances_cents, OLD.total_final_cents)
-     IS DISTINCT FROM
-     (NEW.restaurant_id, NEW.week_start, NEW.week_end, NEW.revision, NEW.supersedes_settlement_id,
-      NEW.total_cents, NEW.total_advances_cents, NEW.total_final_cents)
-  THEN
-    RAISE EXCEPTION 'IMMUTABLE: a % settlement cannot change its period or totals (id %)', OLD.status, OLD.id;
+  IF OLD.status = 'VOIDED' THEN
+    IF (to_jsonb(OLD) - 'updated_at') IS DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
+      RAISE EXCEPTION 'IMMUTABLE: a VOIDED settlement cannot be modified (id %)', OLD.id;
+    END IF;
+    RETURN NEW;
   END IF;
 
   IF NEW.status <> OLD.status THEN
@@ -322,6 +367,19 @@ BEGIN
     END IF;
   END IF;
 
+  IF OLD.status = 'CLOSED' THEN
+    IF NEW.status = 'CLOSED'
+       AND (to_jsonb(OLD) - 'updated_at') IS DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
+      RAISE EXCEPTION 'IMMUTABLE: a CLOSED settlement cannot be modified (id %)', OLD.id;
+    END IF;
+    IF NEW.status = 'VOIDED'
+       AND (to_jsonb(OLD) - 'status' - 'voided_at' - 'voided_by' - 'void_reason' - 'updated_at')
+           IS DISTINCT FROM
+           (to_jsonb(NEW) - 'status' - 'voided_at' - 'voided_by' - 'void_reason' - 'updated_at') THEN
+      RAISE EXCEPTION 'IMMUTABLE: voiding a CLOSED settlement cannot change anything else (id %)', OLD.id;
+    END IF;
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -330,10 +388,20 @@ CREATE TRIGGER trg_weekly_settlements_guard
   BEFORE UPDATE OR DELETE ON weekly_settlements
   FOR EACH ROW EXECUTE FUNCTION fn_weekly_settlements_guard();
 
+-- Identity and money: frozen always. DELIVERED: delivery data (incl. delivery_note) and preparation
+-- data frozen while it stays DELIVERED; reverting (DELIVERED -> PREPARED) may only clear the delivery
+-- data. VOIDED: frozen.
 CREATE FUNCTION fn_weekly_payments_guard() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'IMMUTABLE: weekly payments cannot be deleted (void them instead)';
+  END IF;
+
+  IF OLD.status = 'VOIDED' THEN
+    IF (to_jsonb(OLD) - 'updated_at') IS DISTINCT FROM (to_jsonb(NEW) - 'updated_at') THEN
+      RAISE EXCEPTION 'IMMUTABLE: a VOIDED weekly payment cannot be modified (id %)', OLD.id;
+    END IF;
+    RETURN NEW;
   END IF;
 
   -- Identity and money are frozen; only status / preparation / delivery fields may change.
@@ -353,6 +421,23 @@ BEGIN
          OR (OLD.status = 'PREPARED'  AND NEW.status IN ('PENDING', 'DELIVERED', 'VOIDED'))
          OR (OLD.status = 'DELIVERED' AND NEW.status = 'PREPARED')) THEN
       RAISE EXCEPTION 'INVALID_TRANSITION: payment % -> % (id %)', OLD.status, NEW.status, OLD.id;
+    END IF;
+  END IF;
+
+  IF OLD.status = 'DELIVERED' THEN
+    IF NEW.status = 'DELIVERED'
+       AND (OLD.delivered_at, OLD.delivered_by, OLD.delivery_note, OLD.prepared_at, OLD.prepared_by)
+           IS DISTINCT FROM
+           (NEW.delivered_at, NEW.delivered_by, NEW.delivery_note, NEW.prepared_at, NEW.prepared_by) THEN
+      RAISE EXCEPTION 'IMMUTABLE: the delivery and preparation data of a DELIVERED payment cannot change (id %)', OLD.id;
+    END IF;
+    IF NEW.status = 'PREPARED'
+       AND (OLD.prepared_at, OLD.prepared_by) IS DISTINCT FROM (NEW.prepared_at, NEW.prepared_by) THEN
+      RAISE EXCEPTION 'IMMUTABLE: reverting a delivery cannot change the preparation data (id %)', OLD.id;
+    END IF;
+    IF NEW.status = 'PREPARED'
+       AND NEW.delivery_note IS NOT NULL AND NEW.delivery_note IS DISTINCT FROM OLD.delivery_note THEN
+      RAISE EXCEPTION 'IMMUTABLE: reverting a delivery can only clear the delivery note (id %)', OLD.id;
     END IF;
   END IF;
 

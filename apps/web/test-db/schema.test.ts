@@ -108,6 +108,8 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
     );
     expect(rows.map((r) => r.tgname)).toEqual([
       'trg_advance_applications_guard',
+      'trg_advances_guard',
+      'trg_advances_no_truncate',
       'trg_audit_log_append_only',
       'trg_audit_log_no_truncate',
       'trg_daily_distribution_items_require_draft',

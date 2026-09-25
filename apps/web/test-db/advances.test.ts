@@ -177,3 +177,134 @@ describe('aplicaciones de adelantos (advance_applications)', () => {
     );
   });
 });
+
+describe('adelantos: inmutabilidad (trigger fn_advances_guard)', () => {
+  // Adelanto de 800 consumido en parte (500) por el cierre del día 22: saldo pendiente 300.
+  const withActiveApplication =
+    advance(ADVANCE, { amount: 800 }) +
+    draftDay(100, '2026-09-22') +
+    application(APPLICATION, ADVANCE, ITEM_A, 500) +
+    `UPDATE advances SET applied_cents = 500 WHERE id = '${ADVANCE}';` +
+    closeDistribution(DIST, { total: 2000 });
+
+  /** Anula la distribución que consumió el adelanto: revierte la aplicación y reabre el saldo. */
+  const voidConsumingDistribution =
+    `UPDATE advance_applications SET reverted_at = now() WHERE id = '${APPLICATION}';
+     UPDATE advances SET applied_cents = 0, status = 'PENDING' WHERE id = '${ADVANCE}';` +
+    voidDistribution(DIST, 'cargué mal las horas');
+
+  const voidAdvance = `UPDATE advances SET status = 'VOIDED' WHERE id = '${ADVANCE}';`;
+
+  describe('con aplicaciones vigentes', () => {
+    it.each([
+      ['amount_cents', `amount_cents = 900`],
+      ['employee_id', `employee_id = '${ID.E2}'`],
+      ['date', `date = '2026-09-19'`],
+      ['restaurant_id', `restaurant_id = '${uuid(11)}'`],
+    ])('no se puede cambiar %s', async (_column, assignment) => {
+      await db.exec(withActiveApplication);
+      await db.fails(
+        `UPDATE advances SET ${assignment} WHERE id = '${ADVANCE}';`,
+        /IMMUTABLE: an advance with active applications/,
+      );
+    });
+
+    it('no se puede anular directamente', async () => {
+      await db.exec(withActiveApplication);
+      await db.fails(voidAdvance, /an advance with active applications cannot be voided/);
+    });
+
+    it('applied_cents y status siguen cambiando en cada cierre (se aplica el saldo en otro día)', async () => {
+      await db.exec(
+        withActiveApplication +
+          dist(uuid(200), '2026-09-23') +
+          item(uuid(202), uuid(200), ID.E1) +
+          application(uuid(162), ADVANCE, uuid(202), 300) +
+          `UPDATE advances SET applied_cents = 800, status = 'APPLIED' WHERE id = '${ADVANCE}';`,
+      );
+      const [row] = await db.rows<{ status: string; applied: string }>(
+        `SELECT status::text AS status, applied_cents::text AS applied FROM advances WHERE id = '${ADVANCE}'`,
+      );
+      expect(row).toEqual({ status: 'APPLIED', applied: '800' });
+    });
+  });
+
+  it('flujo legítimo: anular la distribución que lo consumió y después anular el adelanto', async () => {
+    await db.exec(withActiveApplication + voidConsumingDistribution + voidAdvance);
+    const [row] = await db.rows<{ status: string }>(
+      `SELECT status::text AS status FROM advances WHERE id = '${ADVANCE}'`,
+    );
+    expect(row).toEqual({ status: 'VOIDED' });
+  });
+
+  it('con las aplicaciones revertidas, el adelanto vuelve a ser editable', async () => {
+    await db.exec(withActiveApplication + voidConsumingDistribution);
+    await db.exec(
+      `UPDATE advances SET amount_cents = 900, date = '2026-09-19' WHERE id = '${ADVANCE}';`,
+    );
+  });
+
+  it('sin aplicaciones, un adelanto cargado por error se puede corregir o anular', async () => {
+    await db.exec(advance(ADVANCE, { amount: 800 }));
+    await db.exec(
+      `UPDATE advances SET amount_cents = 700, employee_id = '${ID.E2}', date = '2026-09-19' WHERE id = '${ADVANCE}';` +
+        voidAdvance,
+    );
+  });
+
+  describe('borrado físico', () => {
+    const deleteAdvance = `DELETE FROM advances WHERE id = '${ADVANCE}';`;
+    const cannotDelete = /IMMUTABLE: advances cannot be deleted/;
+
+    it('no se borra un adelanto nunca aplicado', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }));
+      await db.fails(deleteAdvance, cannotDelete);
+    });
+
+    it('no se borra un adelanto con aplicaciones vigentes', async () => {
+      await db.exec(withActiveApplication);
+      await db.fails(deleteAdvance, cannotDelete);
+    });
+
+    it('no se borra un adelanto VOIDED', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }) + voidAdvance);
+      await db.fails(deleteAdvance, cannotDelete);
+    });
+
+    it('no se puede vaciar la tabla con TRUNCATE', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }));
+      await db.fails(`TRUNCATE advances CASCADE;`, cannotDelete);
+    });
+
+    it('para descartarlo se anula (VOIDED) y la fila se conserva', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }) + voidAdvance);
+      const [row] = await db.rows<{ status: string; amount: string }>(
+        `SELECT status::text AS status, amount_cents::text AS amount FROM advances WHERE id = '${ADVANCE}'`,
+      );
+      expect(row).toEqual({ status: 'VOIDED', amount: '800' });
+    });
+  });
+
+  describe('VOIDED es un estado final', () => {
+    it.each([
+      ['volver a PENDING', `status = 'PENDING'`],
+      ['cambiar el monto', `amount_cents = 900`],
+      ['cambiar lo aplicado', `applied_cents = 100`],
+      ['cambiar la nota', `note = 'otra nota'`],
+    ])('no se puede %s', async (_label, assignment) => {
+      await db.exec(advance(ADVANCE, { amount: 800 }) + voidAdvance);
+      await db.fails(
+        `UPDATE advances SET ${assignment} WHERE id = '${ADVANCE}';`,
+        /IMMUTABLE: a VOIDED advance/,
+      );
+    });
+
+    it('no se puede aplicar en un cierre', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }) + voidAdvance + draftDay(100, '2026-09-22'));
+      await db.fails(
+        application(APPLICATION, ADVANCE, ITEM_A, 500),
+        /a VOIDED advance cannot be applied/,
+      );
+    });
+  });
+});

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ID,
   closeSettlement,
+  closedDay,
   event,
   markDelivered,
   markPrepared,
@@ -281,9 +282,9 @@ describe('sobre semanal: transiciones e inmutabilidad', () => {
     await db.exec(start + `UPDATE weekly_payments SET status = 'VOIDED' WHERE id = '${PAY1}';`);
     await db.fails(
       `UPDATE weekly_payments SET status = 'PENDING' WHERE id = '${PAY1}';`,
-      /INVALID_TRANSITION/,
+      /IMMUTABLE: a VOIDED weekly payment/,
     );
-    await db.fails(markPrepared(PAY1), /INVALID_TRANSITION/);
+    await db.fails(markPrepared(PAY1), /IMMUTABLE: a VOIDED weekly payment/);
   });
 
   it('los importes y la identidad del sobre son inmutables', async () => {
@@ -314,6 +315,209 @@ describe('sobre semanal: transiciones e inmutabilidad', () => {
   it('un sobre no se borra', async () => {
     await db.exec(start);
     await db.fails(`DELETE FROM weekly_payments WHERE id = '${PAY1}';`, /cannot be deleted/);
+  });
+});
+
+describe('liquidación semanal: CLOSED y VOIDED congelan toda la fila', () => {
+  const closedVoided = closedSettlement + voidSettlement(S1);
+
+  it.each([
+    ['notes', `notes = 'nota agregada después'`],
+    ['closed_at', `closed_at = now() - interval '1 day'`],
+    ['closed_by', `closed_by = '${ID.U2}'`],
+    ['created_by', `created_by = '${ID.U2}'`],
+    ['void_reason sin anular', `void_reason = 'motivo sin anular la liquidación'`],
+  ])('CLOSED: no se puede cambiar %s', async (_label, assignment) => {
+    await db.exec(closedSettlement);
+    await db.fails(
+      `UPDATE weekly_settlements SET ${assignment} WHERE id = '${S1}';`,
+      /IMMUTABLE: a CLOSED settlement cannot be modified/,
+    );
+  });
+
+  it('CLOSED -> VOIDED solo completa voided_at, voided_by y void_reason', async () => {
+    await db.exec(closedSettlement);
+    const voidAnd = (extra: string): string =>
+      `UPDATE weekly_settlements SET status = 'VOIDED', voided_at = now(), voided_by = '${ID.U1}',
+         void_reason = 'wrong hours on monday', ${extra} WHERE id = '${S1}';`;
+    const immutable = /IMMUTABLE: voiding a CLOSED settlement cannot change anything else/;
+    await db.fails(voidAnd(`notes = 'se anuló'`), immutable);
+    await db.fails(voidAnd(`closed_by = '${ID.U2}'`), immutable);
+    await db.fails(voidAnd(`closed_at = now() - interval '1 day'`), immutable);
+  });
+
+  it.each([
+    ['notes', `notes = 'nota agregada después'`],
+    ['void_reason', `void_reason = 'otro motivo distinto al original'`],
+    ['voided_by', `voided_by = '${ID.U2}'`],
+    ['voided_at', `voided_at = now() - interval '1 day'`],
+    ['closed_by', `closed_by = '${ID.U2}'`],
+  ])('VOIDED: no se puede cambiar %s', async (_label, assignment) => {
+    await db.exec(closedVoided);
+    await db.fails(
+      `UPDATE weekly_settlements SET ${assignment} WHERE id = '${S1}';`,
+      /IMMUTABLE: a VOIDED settlement cannot be modified/,
+    );
+  });
+
+  it('una OPEN sigue siendo editable (notas y totales provisionales) antes de cerrar', async () => {
+    await db.exec(
+      settlement(S1) +
+        `UPDATE weekly_settlements SET notes = 'falta el domingo', total_cents = 1000,
+           total_advances_cents = 0, total_final_cents = 1000 WHERE id = '${S1}';` +
+        `UPDATE weekly_settlements SET notes = NULL WHERE id = '${S1}';` +
+        closeSettlement(S1),
+    );
+  });
+
+  it('una OPEN puede anularse con sus notas en la misma operación', async () => {
+    await db.exec(
+      settlement(S1) +
+        `UPDATE weekly_settlements SET status = 'VOIDED', voided_at = now(), voided_by = '${ID.U1}',
+           void_reason = 'semana creada por error', notes = 'duplicada' WHERE id = '${S1}';`,
+    );
+  });
+
+  it('flujo completo: asignar días, cerrar, generar sobres, anular y liberar los días', async () => {
+    const DAY = uuid(100);
+    await db.exec(
+      closedDay(100, '2026-09-22') +
+        settlement(S1) +
+        `UPDATE daily_distributions SET settlement_id = '${S1}' WHERE id = '${DAY}';` +
+        closeSettlement(S1) +
+        payment(PAY1, S1, { gross: 1000, advances: 0 }) +
+        payment(PAY2, S1, { employee: ID.E2, gross: 1000, advances: 0 }),
+    );
+    await db.exec(
+      `UPDATE weekly_payments SET status = 'VOIDED' WHERE settlement_id = '${S1}';` +
+        voidSettlement(S1) +
+        `UPDATE daily_distributions SET settlement_id = NULL WHERE id = '${DAY}';`,
+    );
+    const [row] = await db.rows<{ status: string; released: boolean }>(
+      `SELECT s.status::text AS status, d.settlement_id IS NULL AS released
+       FROM weekly_settlements s, daily_distributions d WHERE s.id = '${S1}' AND d.id = '${DAY}'`,
+    );
+    expect(row).toEqual({ status: 'VOIDED', released: true });
+  });
+});
+
+describe('sobre semanal: datos de entrega y sobres anulados', () => {
+  const delivered = closedSettlement + payment(PAY1, S1) + markPrepared(PAY1) + markDelivered(PAY1);
+
+  it.each([
+    ['delivered_at', `delivered_at = now() - interval '1 day'`],
+    ['delivered_by', `delivered_by = '${ID.U2}'`],
+    ['prepared_at', `prepared_at = now() - interval '1 day'`],
+    ['prepared_by', `prepared_by = '${ID.U2}'`],
+  ])('DELIVERED: no se puede cambiar %s mientras siga entregado', async (_label, assignment) => {
+    await db.exec(delivered);
+    await db.fails(
+      `UPDATE weekly_payments SET ${assignment} WHERE id = '${PAY1}';`,
+      /IMMUTABLE: the delivery and preparation data of a DELIVERED payment/,
+    );
+  });
+
+  describe('nota de entrega (delivery_note)', () => {
+    const deliveredWithNote =
+      closedSettlement +
+      payment(PAY1, S1) +
+      markPrepared(PAY1) +
+      `UPDATE weekly_payments SET status = 'DELIVERED', delivered_at = now(), delivered_by = '${ID.U1}',
+         delivery_note = 'entregado en mano' WHERE id = '${PAY1}';`;
+    const frozen = /IMMUTABLE: the delivery and preparation data of a DELIVERED payment/;
+
+    it('se registra en el momento de la entrega (PREPARED -> DELIVERED)', async () => {
+      await db.exec(deliveredWithNote);
+      const [row] = await db.rows<{ note: string }>(
+        `SELECT delivery_note AS note FROM weekly_payments WHERE id = '${PAY1}'`,
+      );
+      expect(row).toEqual({ note: 'entregado en mano' });
+    });
+
+    it.each([
+      ['agregarse', delivered, `delivery_note = 'nota agregada después'`],
+      ['cambiarse', deliveredWithNote, `delivery_note = 'otra nota'`],
+      ['borrarse', deliveredWithNote, `delivery_note = NULL`],
+    ])('no puede %s mientras el sobre siga DELIVERED', async (_label, setup, assignment) => {
+      await db.exec(setup);
+      await db.fails(`UPDATE weekly_payments SET ${assignment} WHERE id = '${PAY1}';`, frozen);
+    });
+
+    it('la reversión puede limpiarla, pero no reemplazarla por otra', async () => {
+      await db.exec(deliveredWithNote);
+      await db.fails(
+        `UPDATE weekly_payments SET status = 'PREPARED', delivered_at = NULL, delivered_by = NULL,
+           delivery_note = 'nota corregida' WHERE id = '${PAY1}';`,
+        /IMMUTABLE: reverting a delivery can only clear the delivery note/,
+      );
+      await db.exec(
+        `UPDATE weekly_payments SET status = 'PREPARED', delivered_at = NULL, delivered_by = NULL,
+           delivery_note = NULL WHERE id = '${PAY1}';`,
+      );
+    });
+
+    it('corregir la nota: revertir la entrega y registrar una nueva con la nota correcta', async () => {
+      await db.exec(
+        deliveredWithNote +
+          `UPDATE weekly_payments SET status = 'PREPARED', delivered_at = NULL, delivered_by = NULL,
+             delivery_note = NULL WHERE id = '${PAY1}';` +
+          `UPDATE weekly_payments SET status = 'DELIVERED', delivered_at = now(), delivered_by = '${ID.U1}',
+             delivery_note = 'entregado al encargado' WHERE id = '${PAY1}';`,
+      );
+      const [row] = await db.rows<{ note: string }>(
+        `SELECT delivery_note AS note FROM weekly_payments WHERE id = '${PAY1}'`,
+      );
+      expect(row).toEqual({ note: 'entregado al encargado' });
+    });
+  });
+
+  it('la reversión limpia la entrega pero no puede tocar los datos de preparación', async () => {
+    await db.exec(delivered);
+    await db.fails(
+      `UPDATE weekly_payments SET status = 'PREPARED', delivered_at = NULL, delivered_by = NULL,
+         prepared_by = '${ID.U2}' WHERE id = '${PAY1}';`,
+      /IMMUTABLE: reverting a delivery cannot change the preparation data/,
+    );
+    await db.exec(revertDelivery(PAY1));
+  });
+
+  it('tras revertir, el sobre se puede volver a entregar (nueva fecha/hora y usuario)', async () => {
+    await db.exec(
+      delivered +
+        revertDelivery(PAY1) +
+        `UPDATE weekly_payments SET status = 'DELIVERED', delivered_at = now(), delivered_by = '${ID.U2}',
+           delivery_note = 'entregado en mano' WHERE id = '${PAY1}';`,
+    );
+    const [row] = await db.rows<{ status: string; delivered_by: string }>(
+      `SELECT status::text AS status, delivered_by::text AS delivered_by FROM weekly_payments WHERE id = '${PAY1}'`,
+    );
+    expect(row).toEqual({ status: 'DELIVERED', delivered_by: ID.U2 });
+  });
+
+  it('PENDING -> VOIDED y PREPARED -> VOIDED están permitidos', async () => {
+    await db.exec(
+      closedSettlement +
+        payment(PAY1, S1) +
+        payment(PAY2, S1, { employee: ID.E2, status: 'PREPARED' }) +
+        `UPDATE weekly_payments SET status = 'VOIDED' WHERE id IN ('${PAY1}', '${PAY2}');`,
+    );
+  });
+
+  it.each([
+    ['delivery_note', `delivery_note = 'nota posterior'`],
+    ['prepared_at', `prepared_at = now() - interval '1 day'`],
+    ['prepared_by', `prepared_by = '${ID.U2}'`],
+    ['status', `status = 'PREPARED'`],
+  ])('VOIDED: no se puede cambiar %s', async (_label, assignment) => {
+    await db.exec(
+      closedSettlement +
+        payment(PAY1, S1, { status: 'PREPARED' }) +
+        `UPDATE weekly_payments SET status = 'VOIDED' WHERE id = '${PAY1}';`,
+    );
+    await db.fails(
+      `UPDATE weekly_payments SET ${assignment} WHERE id = '${PAY1}';`,
+      /IMMUTABLE: a VOIDED weekly payment/,
+    );
   });
 });
 

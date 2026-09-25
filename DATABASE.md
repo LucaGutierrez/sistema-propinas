@@ -4,7 +4,7 @@ Fuente de verdad del esquema. `ARCHITECTURE.md` explica el *por qué*; este docu
 
 Motor: PostgreSQL. ORM: Prisma (el `schema.prisma` se derivará de este documento).
 
-**Revisión 4** (pozo único o por equipo configurable, reversión auditada de entregas, tokens de email). Tres conceptos distintos que no se reemplazan entre sí:
+**Revisión 5** (inmutabilidad reforzada de adelantos, sobres y liquidaciones; migración inicial). Rev. 4: pozo único o por equipo configurable, reversión auditada de entregas, tokens de email. Tres conceptos distintos que no se reemplazan entre sí:
 
 | Concepto | Tablas | Qué es |
 |---|---|---|
@@ -28,7 +28,7 @@ Motor: PostgreSQL. ORM: Prisma (el `schema.prisma` se derivará de este document
 
 ## 1. Convenciones
 
-- **IDs:** `uuid`. **Timestamps:** `created_at`, `updated_at` (`timestamptz`) en todas las tablas.
+- **IDs:** `uuid`. **Timestamps:** `created_at`, `updated_at` (`timestamptz`) en las tablas editables. Las filas que nacen inmutables o son de solo inserción (`auth_tokens`, `daily_distribution_items`, `advance_applications`, `audit_log`) solo tienen `created_at`; `weekly_payment_events` usa `occurred_at`; `rate_limits` usa `window_start`.
 - **Dinero:** `BIGINT` en **centavos** (ARS y USD). Nunca `FLOAT`/`REAL`/`DOUBLE`. $347.990,00 → `34799000`.
 - **Cotización:** `NUMERIC(18,6)` (pesos por 1 USD).
 - **Horas:** `NUMERIC(6,2)`. **Peso:** `NUMERIC(6,2)`. **Puntos:** `NUMERIC(12,4)` (= horas × peso, exacto). **Porcentaje:** `NUMERIC(9,6)` (fracción 0–1).
@@ -147,9 +147,9 @@ Totales (`tips_*`, `total_*`) y `*_snapshot` se fijan **al cerrar**; en `DRAFT` 
 
 Índice único parcial:
 ```sql
-CREATE UNIQUE INDEX ux_daily_dist_active
+CREATE UNIQUE INDEX ux_daily_distributions_active
 ON daily_distributions (restaurant_id, date,
-    COALESCE(team_id, '00000000-0000-0000-0000-000000000000'))
+    COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid))
 WHERE status <> 'VOIDED';
 ```
 Índices: `(restaurant_id, date)`, `(settlement_id)`.
@@ -204,6 +204,12 @@ unique `(daily_distribution_id, employee_id)`.
 | status | AdvanceStatus | `PENDING` (saldo > 0) → `APPLIED` (saldo = 0) / `VOIDED` |
 | note | text null | |
 | created_by | uuid FK users | |
+
+**Inmutabilidad del adelanto** (trigger `fn_advances_guard`):
+- Mientras tenga **aplicaciones vigentes** (`advance_applications.reverted_at IS NULL`) no se puede modificar `amount_cents`, `employee_id`, `restaurant_id` ni `date`, y **no se puede anular**. Primero hay que anular las distribuciones diarias que lo consumieron (eso revierte sus aplicaciones y reabre el saldo). `applied_cents` y `status` sí cambian en cada cierre.
+- Sin aplicaciones vigentes (nunca aplicado, o todas revertidas) se puede corregir o anular.
+- `VOIDED` es **final**: la fila no cambia más y el adelanto no puede aplicarse en ningún cierre.
+- **Nunca se borra** (`DELETE` y `TRUNCATE` rechazados, aunque no se haya aplicado nunca): para descartarlo se anula (`VOIDED`).
 
 **Saldo pendiente** = `amount_cents − applied_cents`. Un adelanto que supera el importe disponible de un día **no se pierde ni genera importes negativos**: se aplica hasta donde alcanza y su saldo sigue `PENDING`, disponible para los próximos cierres diarios y por lo tanto para futuras liquidaciones.
 
@@ -310,9 +316,12 @@ Una distribución diaria `CLOSED` es inmutable. Se refuerza en **tres capas**:
 
 1. **Aplicación:** los servicios rechazan cualquier escritura sobre distribuciones que no estén en `DRAFT`.
 2. **Base de datos (triggers):**
-   - `BEFORE UPDATE OR DELETE` en `tip_entries`, `daily_distribution_items` y `advance_applications` (salvo `reverted_at`): rechaza si la distribución padre no está `DRAFT`.
+   - `BEFORE INSERT OR UPDATE OR DELETE` en `tip_entries` y `daily_distribution_items`: rechaza si la distribución padre no está `DRAFT`.
+   - En `advance_applications`: se insertan solo con el padre en `DRAFT` (durante el cierre) y nunca para un adelanto `VOIDED`; no se borran; lo único que cambia después es `reverted_at`, una sola vez.
+   - En `advances`: ver §4.4 (identidad y monto bloqueados con aplicaciones vigentes, no se anula con aplicaciones vigentes, `VOIDED` final, sin `DELETE` ni `TRUNCATE`).
    - En `daily_distributions`: solo se permiten estas transiciones cuando ya está `CLOSED`: `settlement_id NULL → valor` (al cerrar la semana), `settlement_id valor → NULL` (al anular la semana) y `CLOSED → VOIDED` (con motivo, solo si `settlement_id IS NULL`). Cualquier otro cambio falla.
-   - En `weekly_payments`: los campos monetarios son inmutables tras crearse; solo cambian `status`, `prepared_*`, `delivered_*`, `delivery_note`.
+   - En `weekly_settlements`: `OPEN` es editable. `CLOSED` congela **toda** la fila (incluidos `notes` y `closed_*`); la única salida es `CLOSED → VOIDED`, que solo completa `voided_at`, `voided_by` y `void_reason`. `VOIDED` congela toda la fila. No se borran.
+   - En `weekly_payments`: identidad e importes son inmutables tras crearse. Mientras el sobre siga `DELIVERED`, `delivered_at`, `delivered_by`, `delivery_note`, `prepared_at` y `prepared_by` no cambian: un error en los datos de entrega se corrige con el flujo de reversión (§6), no editando. La reversión `DELIVERED → PREPARED` limpia `delivered_*` y puede limpiar `delivery_note` (no reemplazarla), y no puede tocar `prepared_*`. La nota correcta se registra en la nueva entrega. Un sobre `VOIDED` congela toda la fila. No se borran.
    - En `weekly_payment_events` y `audit_log`: `UPDATE` y `DELETE` siempre rechazados (bitácoras de solo inserción).
 3. **Corrección de errores:** no se edita; se **anula** (`VOIDED`, con motivo) y se crea una nueva distribución. Si el día ya está en una liquidación cerrada, primero hay que anular la liquidación (posible solo si ningún sobre fue entregado).
 
@@ -330,6 +339,8 @@ Una distribución diaria `CLOSED` es inmutable. Se refuerza en **tres capas**:
 
 **Anular distribución diaria:** solo `CLOSED` con `settlement_id IS NULL` (o `DRAFT` descartado). Marca `advance_applications.reverted_at`, recalcula `applied_cents` y reabre los adelantos (`PENDING`).
 
+**Anular un adelanto:** solo si no tiene aplicaciones vigentes. Si ya se descontó en algún día, primero se anulan esas distribuciones diarias (paso anterior) y después se anula el adelanto. `VOIDED` es final.
+
 **Cerrar liquidación semanal** (transacción, `FOR UPDATE`):
 1. Estado `OPEN`; no existen distribuciones `DRAFT` con fecha en `[week_start, week_end]` (se listan para resolverlas primero).
 2. Asigna `settlement_id` a todas las `daily_distributions` `CLOSED` de la semana sin liquidación (todos los equipos).
@@ -346,7 +357,7 @@ Sobre DELIVERED
  → 1. Autorización: solo OWNER/ADMIN (permiso payments.revert)
  → 2. Reversión de la entrega: DELIVERED → PREPARED
         · motivo obligatorio · evento DELIVERY_REVERTED (authorized_by) · fila en audit_log
-        · se limpian delivered_at/by en la fila; el evento DELIVERED original se conserva
+        · se limpian delivered_at/by (y delivery_note) en la fila; el evento DELIVERED original se conserva
         · "Revertir entregas de la semana": acción masiva con un único motivo (un evento por sobre)
  → 3. Anulación de la liquidación (ya no hay sobres DELIVERED): sobres → VOIDED, días liberados
  → 4. Corrección: se anulan y rehacen las distribuciones diarias afectadas
@@ -446,12 +457,14 @@ Bandeja de sobres de la semana: Roro → $516.447 · Leo → $623.450 · Marcos 
 ## 10. Migraciones y seed
 
 - Migraciones Prisma versionadas. `CHECK`, índices únicos parciales/por expresión y **triggers de inmutabilidad** se agregan como SQL dentro de la migración (Prisma no los modela). El SQL está en `apps/web/prisma/sql/0001_constraints.sql`.
+- **Migración inicial:** `apps/web/prisma/migrations/20260925000000_init/migration.sql` = DDL generado por Prisma (`prisma migrate diff --from-empty`, sin editar) + copia literal de `sql/0001_constraints.sql` al final. Una migración aplicada no se edita: cualquier cambio posterior va en una migración nueva. `test-db/migrations.test.ts` verifica que la migración contiene el SQL de restricciones y que aplicar las migraciones en orden produce exactamente el mismo catálogo (columnas, restricciones, índices, triggers, funciones y enums) que la base usada por los demás tests.
+- **Verificación de la migración (sin Neon):** se aplicó con `prisma migrate deploy` sobre un PostgreSQL 18.3 local y temporal (PGlite por socket) y `prisma migrate diff` desde esa base hacia `schema.prisma` resultó **vacío**: Prisma no intenta eliminar los índices parciales/por expresión, los CHECK ni los triggers. **Aún no se aplicó en Neon** (PostgreSQL 18.6).
 - **Estado de verificación (Fase 0):** el esquema Prisma pasó `prisma validate` y `prisma generate`. Los tests de base de datos (`pnpm test:db`, carpeta `apps/web/test-db/`, también en el CI) ejecutan el DDL que Prisma genera desde `schema.prisma` (`prisma migrate diff`, sin duplicar tablas a mano) más `0001_constraints.sql` sobre **PGlite**, y comprueban CHECK, índices únicos (incl. parciales y por expresión), claves foráneas, triggers de inmutabilidad, estados de distribución/liquidación/sobre, adelantos y bitácoras de solo inserción. No reimplementan reglas de negocio: insertan filas y verifican que PostgreSQL las acepta o rechaza. Cada test corre en una transacción que se revierte.
 - **Limitaciones de PGlite (no es idéntico a un PostgreSQL de producción):**
   - Es PostgreSQL compilado a WebAssembly (32 bits) que corre dentro del proceso de Node, con **una única conexión**. Por eso **no se puede probar concurrencia**: bloqueos (`SELECT … FOR UPDATE`), condiciones de carrera, niveles de aislamiento, deadlocks ni la invariante I11 (adelanto aplicado desde dos cierres simultáneos). La validación anti-mezcla de modos de pozo por trigger es de mejor esfuerzo justamente ante concurrencia.
-  - Versión: PGlite 0.5.8 incluye PostgreSQL 18.3. El proveedor de producción (Neon, Supabase…) puede ofrecer otra versión mayor; no se verificó cuál. Las funciones usadas son básicas (enums, CHECK, índices parciales y por expresión, triggers PL/pgSQL, operadores `jsonb`, `gen_random_uuid()`), pero la compatibilidad entre versiones no está probada.
+  - Versión: PGlite 0.5.8 incluye PostgreSQL 18.3. Neon ofrece PostgreSQL 18.6 (misma versión mayor). Las funciones usadas son básicas (enums, CHECK, índices parciales y por expresión, triggers PL/pgSQL, operadores `jsonb`, `gen_random_uuid()`), pero la compatibilidad entre versiones no está probada.
   - No cubre: extensiones, roles y permisos, RLS, pooling de conexiones (PgBouncer), locale/collation/zona horaria del servidor, rendimiento, ni el flujo real de migraciones (`prisma migrate dev/deploy`): el DDL sale de `prisma migrate diff`, no de aplicar migraciones.
   - Los tests comprueban nombres de restricciones y prefijos propios de los mensajes (`IMMUTABLE:`, `INVALID_TRANSITION:`, `RULE:`); los textos de errores nativos de PostgreSQL (p. ej. claves foráneas) pueden variar entre versiones.
-- **Pendiente con una base real:** crear la migración inicial incluyendo el SQL y revisar con `prisma migrate diff` que Prisma no intente eliminar los índices parciales/por expresión en migraciones futuras.
+- **Pendiente con una base real:** aplicar la migración inicial en Neon (`prisma migrate deploy`) y probar concurrencia (`FOR UPDATE`, I11). En Neon conviene `migrate deploy`; `migrate dev` necesita una base *shadow* (usar una rama de Neon aparte).
 - **Límites conocidos de las restricciones en base de datos:** la invariante I1 (Σ ítems = total) y I4 (`applied_cents` = Σ aplicaciones vigentes) no se pueden expresar con un CHECK; las garantiza el servicio dentro de su transacción y el motor de cálculo. La validación de "no mezclar modos de pozo en un día" por trigger es de mejor esfuerzo ante concurrencia; el servicio la valida dentro de su transacción.
 - `seed.ts` (solo desarrollo): restaurante demo, equipos sugeridos (Salón, Barra, Cocina, Recepción, Bacha, Runner, Guardavidas), puestos con pesos de ejemplo, empleados, cotización y una semana de distribuciones diarias para probar liquidación y sobres.
