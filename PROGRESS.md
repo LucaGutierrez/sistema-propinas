@@ -91,9 +91,9 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 **Infraestructura**: ESLint con reglas que impiden `Number`, `Math`, `Date`, floats e imports externos en el motor; Prettier; `.gitattributes` (LF); `.gitignore` verificado (secretos, `.env*`, `reference/*` ignorados; `.env.example` versionado); `.github/workflows/ci.yml` con dos jobs: `check` (lint, typecheck, `test`, `test:db`, Prisma, motor sin dependencias) y `postgres` (`test:pg` sobre un contenedor **PostgreSQL 18**, misma versión mayor que Neon 18.6, para aproximar ese entorno; no se conecta a Neon).
 
-**Documentación**: `ARCHITECTURE.md` (rev. 5), `DATABASE.md` (rev. 4), `README.md`, este `PROGRESS.md`.
+**Documentación**: `ARCHITECTURE.md` (rev. 5), `DATABASE.md` (rev. 5), `README.md`, este `PROGRESS.md`.
 
-**Verificado el 2026-09-25**: `lint`, `typecheck`, `test` (257 + 3 `todo`), `test:db` (206), `test:pg` (11, sobre PostgreSQL 16 local y temporal), `prisma validate`, `prisma generate` y `format:check` sin errores. El job `postgres` del CI (PostgreSQL 18) se ejecuta por primera vez con el push de esta rama.
+**Verificado el 2026-09-25**: `lint`, `typecheck`, `test` (257 + 3 `todo`), `test:db` (206), `test:pg` (11, sobre PostgreSQL 16 local y temporal), `prisma validate`, `prisma generate` y `format:check` sin errores. `test:pg` se ejecutó **localmente** contra un PostgreSQL temporal, no en GitHub. El job `postgres` (PostgreSQL 18) fue agregado al CI pero **todavía no fue ejecutado por GitHub Actions**: el workflow solo corre con push a `main` o en un Pull Request, y el push de la rama no lo dispara.
 
 ## 7. Qué falta de la Fase 0
 
@@ -101,7 +101,7 @@ Todo lo construible sin recursos externos está hecho. Faltan verificaciones que
 
 1. **PostgreSQL real**: ~~crear la migración inicial y revisar el drift~~ (hecho; verificado en cada corrida de `test:pg`). Falta **aplicarla en Neon** con `prisma migrate deploy` (requiere autorización explícita del usuario).
 2. ~~**Concurrencia**~~: cubierta por `test:pg` (bloqueos `FOR UPDATE`, condiciones de carrera, índices únicos e invariante I11) contra PostgreSQL real, sin tocar Neon.
-3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. Falta confirmar en verde el nuevo job `postgres` (se ejecuta con el push de esta rama).
+3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. El nuevo job `postgres` fue agregado pero **aún no corrió en GitHub Actions**; para verificarlo hay que abrir un Pull Request de la rama hacia `main`.
 4. **Excel real**: colocar el `.xlsx` en `reference/` y convertirlo en fixtures anonimizados (los 3 `todo` de `excel-reference.test.ts`).
 
 ## 8. Qué debemos hacer inmediatamente al continuar
@@ -156,7 +156,7 @@ DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma ge
 **Cuando retomemos: revisar la rama `claude/proyecto-continuacion-j1jaup` (tests contra PostgreSQL real) y, si se aprueba, integrarla a `main`. Después, aplicar la migración en Neon (solo con autorización explícita).**
 
 1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (257), `pnpm test:db` (206) y `pnpm test:pg` (11) en verde.
-2. **Revisar el CI de la rama:** los jobs `check` y `postgres` (PostgreSQL 18) en verde en GitHub.
+2. **Verificar el CI real:** abrir un Pull Request de `claude/proyecto-continuacion-j1jaup` hacia `main` (solo con aprobación del usuario; abrirlo no hace merge) para que GitHub Actions ejecute por primera vez los jobs `check` y `postgres` (PostgreSQL 18), y confirmarlos en verde.
 3. **Integrar a `main`** (cuando el usuario lo apruebe).
 4. **Aplicar en Neon** (cuando el usuario lo autorice): desde `apps/web`, `pnpm exec prisma migrate deploy`; después `prisma migrate status` y `prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma` (debe dar vacío).
 5. **Fase 1, paso 1** (solo con aprobación explícita): scaffold de Next.js en `apps/web` + Better Auth (conciliar sus tablas con `users`/`auth_tokens`), siguiendo el orden del MVP. Al escribir los servicios de cierre, respetar el protocolo de bloqueo que prueba `test:pg` (`FOR UPDATE` sobre la distribución y los adelantos; validar la mezcla de pozos dentro de la transacción).
