@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm bloquea los scripts de instalación por defecto. Solo se permiten estos paquetes
+# (Prisma descarga sus binarios de consulta/esquema durante la instalación).
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true

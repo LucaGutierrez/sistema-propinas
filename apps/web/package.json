@@ -1,0 +1,21 @@
+{
+  "name": "@propinas/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Aplicación web (Next.js se agrega en la Fase 1). En la Fase 0 solo contiene el esquema Prisma y sus tests de base de datos.",
+  "type": "module",
+  "scripts": {
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/node": "^26.6.2",
+    "prisma": "^6.19.3",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  }
+}

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Valor ficticio: validate/generate no se conectan a la base de datos.
+      DATABASE_URL: postgresql://user:password@localhost:5432/propinas?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      # La versión de pnpm sale del campo "packageManager" del package.json raíz.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (incluye las reglas de pureza del motor)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests (motor de cálculo)
+        run: pnpm test
+
+      # Ejecuta el DDL de Prisma + 0001_constraints.sql sobre PGlite (PostgreSQL en WebAssembly).
+      # No reemplaza probar contra un PostgreSQL real: ver DATABASE.md §10.
+      - name: Tests de base de datos (PGlite)
+        run: pnpm test:db
+
+      - name: Prisma validate
+        run: pnpm prisma validate
+
+      - name: Prisma generate
+        run: pnpm prisma generate
+
+      # El motor de cálculo no puede tener dependencias de runtime.
+      - name: tip-engine sin dependencias
+        run: |
+          node -e "const p=require('./packages/tip-engine/package.json'); for (const k of ['dependencies','peerDependencies','optionalDependencies']) { if (p[k] && Object.keys(p[k]).length) { console.error('tip-engine no puede declarar ' + k); process.exit(1); } }"

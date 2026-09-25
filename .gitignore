@@ -1,0 +1,60 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Builds y salidas
+.next/
+out/
+dist/
+build/
+coverage/
+.turbo/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Variables de entorno y secretos (solo .env.example se versiona)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials*.json
+service-account*.json
+secrets/
+*.secret
+*.secrets
+
+# Prisma / bases de datos locales
+apps/web/src/generated/
+apps/web/prisma/generated/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+
+# Datos reales de referencia (pueden contener sueldos/propinas de personas): no versionar
+reference/*
+!reference/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+
+# Configuración local de Claude Code
+.claude/settings.local.json
