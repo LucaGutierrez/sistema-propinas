@@ -297,23 +297,52 @@ describe('cierre simultáneo de la misma distribución', () => {
   });
 });
 
-describe('índices únicos bajo concurrencia', () => {
-  const insertDay = `INSERT INTO daily_distributions (id, restaurant_id, scope, date_from, date_to, created_by, updated_at)
-    VALUES ($1, $2, $3::distribution_scope, '2026-09-22', $4, $5, now())`;
+describe('I13 bajo concurrencia: repartos superpuestos (restricción de exclusión)', () => {
+  const insertDist = `INSERT INTO daily_distributions (id, restaurant_id, scope, date_from, date_to, created_by, updated_at)
+    VALUES ($1, $2, $3::distribution_scope, $4, $5, $6, now())`;
+  const day = (f: Fixture, date: string) => [randomUUID(), f.restaurant, 'DAY', date, date, f.user];
+  const week = (f: Fixture, from: string, to: string) => [
+    randomUUID(),
+    f.restaurant,
+    'PERIOD',
+    from,
+    to,
+    f.user,
+  ];
+  const overlap = /ex_daily_distributions_no_overlap/;
 
-  it('dos repartos que empiezan el mismo día creados a la vez: el segundo espera y falla', async () => {
+  it('un DAY y un PERIOD superpuestos creados a la vez (distinto inicio): el segundo espera y falla', async () => {
     const f = await pg.fixture();
     const t1 = await pg.connect();
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]);
-    const second = errorOf(
-      t2.query(insertDay, [randomUUID(), f.restaurant, 'PERIOD', '2026-09-28', f.user]),
-    );
+    await t1.query(insertDist, day(f, '2026-09-23'));
+    const second = errorOf(t2.query(insertDist, week(f, '2026-09-21', '2026-09-27')));
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('COMMIT');
-    expect(await second).toMatch(/ux_daily_distributions_active/);
+    expect(await second).toMatch(overlap);
+    await t2.query('ROLLBACK');
+
+    const setup = await pg.connect();
+    const rows = await setup.query<{ scope: string }>(
+      `SELECT scope::text AS scope FROM daily_distributions WHERE restaurant_id = $1`,
+      [f.restaurant],
+    );
+    expect(rows).toEqual([{ scope: 'DAY' }]);
+  });
+
+  it('dos repartos del mismo día creados a la vez: el segundo espera y falla', async () => {
+    const f = await pg.fixture();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(insertDist, day(f, '2026-09-22'));
+    const second = errorOf(t2.query(insertDist, day(f, '2026-09-22')));
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    expect(await second).toMatch(overlap);
   });
 
   it('si el primero se revierte, el segundo se crea', async () => {
@@ -322,16 +351,42 @@ describe('índices únicos bajo concurrencia', () => {
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]);
-    const second = errorOf(
-      t2.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]),
-    );
+    await t1.query(insertDist, week(f, '2026-09-21', '2026-09-27'));
+    const second = errorOf(t2.query(insertDist, day(f, '2026-09-25')));
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('ROLLBACK');
     expect(await second).toBeNull();
     await t2.query('COMMIT');
   });
 
+  it('también en REPEATABLE READ: la segunda transacción no puede confirmar un solapamiento', async () => {
+    const f = await pg.fixture();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    await t2.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    await t1.query(insertDist, week(f, '2026-09-21', '2026-09-27'));
+    const second = errorOf(t2.query(insertDist, day(f, '2026-09-27')));
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    // PostgreSQL rechaza por la exclusión o por conflicto de serialización: nunca quedan los dos.
+    expect(await second).toMatch(/ex_daily_distributions_no_overlap|could not serialize/);
+  });
+
+  it('repartos que no se tocan (períodos contiguos) creados a la vez: pasan los dos sin esperar', async () => {
+    const f = await pg.fixture();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(insertDist, week(f, '2026-09-21', '2026-09-27'));
+    await t2.query(insertDist, week(f, '2026-09-28', '2026-10-04'));
+    await t1.query('COMMIT');
+    await t2.query('COMMIT');
+  });
+});
+
+describe('índices únicos bajo concurrencia', () => {
   it('dos liquidaciones de la misma semana creadas a la vez: el segundo espera y falla', async () => {
     const f = await pg.fixture();
     // Revisiones distintas: así choca el índice de "una vigente por semana" y no el de revisión.
@@ -344,80 +399,6 @@ describe('índices únicos bajo concurrencia', () => {
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('COMMIT');
     expect(await second).toMatch(/ux_weekly_settlements_active/);
-  });
-});
-
-describe('repartos superpuestos con distinto inicio (trigger fn_daily_distributions_no_overlap)', () => {
-  const insertDist = `INSERT INTO daily_distributions (id, restaurant_id, scope, date_from, date_to, created_by, updated_at)
-    VALUES ($1, $2, $3::distribution_scope, $4, $5, $6, now())`;
-  const lockRestaurant = `SELECT id FROM restaurants WHERE id = $1 FOR UPDATE`;
-
-  it('documenta el límite del trigger: sin serializar, un DAY y un PERIOD simultáneos pasan los dos', async () => {
-    // El trigger no ve filas sin confirmar y el índice no choca (date_from distinto). Por eso el
-    // servicio crea repartos serializando por restaurante (DATABASE.md §10).
-    const f = await pg.fixture();
-    const t1 = await pg.connect();
-    const t2 = await pg.connect();
-    await t1.query('BEGIN');
-    await t2.query('BEGIN');
-    await t1.query(insertDist, [
-      randomUUID(),
-      f.restaurant,
-      'DAY',
-      '2026-09-23',
-      '2026-09-23',
-      f.user,
-    ]);
-    await t2.query(insertDist, [
-      randomUUID(),
-      f.restaurant,
-      'PERIOD',
-      '2026-09-21',
-      '2026-09-27',
-      f.user,
-    ]);
-    await t1.query('COMMIT');
-    await t2.query('COMMIT');
-
-    const setup = await pg.connect();
-    const rows = await setup.query<{ scope: string }>(
-      `SELECT scope::text AS scope FROM daily_distributions WHERE restaurant_id = $1 ORDER BY 1`,
-      [f.restaurant],
-    );
-    expect(rows).toEqual([{ scope: 'DAY' }, { scope: 'PERIOD' }]);
-  });
-
-  it('serializando por restaurante (FOR UPDATE), el segundo espera y el trigger lo rechaza', async () => {
-    const f = await pg.fixture();
-    const t1 = await pg.connect();
-    const t2 = await pg.connect();
-    await t1.query('BEGIN');
-    await t2.query('BEGIN');
-    await t1.query(lockRestaurant, [f.restaurant]);
-    await t1.query(insertDist, [
-      randomUUID(),
-      f.restaurant,
-      'DAY',
-      '2026-09-23',
-      '2026-09-23',
-      f.user,
-    ]);
-    const second = errorOf(
-      (async () => {
-        await t2.query(lockRestaurant, [f.restaurant]);
-        await t2.query(insertDist, [
-          randomUUID(),
-          f.restaurant,
-          'PERIOD',
-          '2026-09-21',
-          '2026-09-27',
-          f.user,
-        ]);
-      })(),
-    );
-    await pg.waitUntilBlocked(t2.pid);
-    await t1.query('COMMIT');
-    expect(await second).toMatch(/distributions of a restaurant cannot overlap/);
   });
 });
 

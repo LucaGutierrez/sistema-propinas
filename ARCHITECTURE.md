@@ -218,7 +218,7 @@ sistema-propinas/
 - **Acceso:** `users`, `restaurants`, `memberships` (rol).
 - **Catálogos:** `teams`, `positions` (identidad estable del puesto; equipo opcional), `employees` (no versionados), `exchange_rates`.
 - **Política versionada:** `distribution_policy_versions` (parámetros tipados, solo inserción), `policy_version_positions` (porción de cada puesto, `NUMERIC(20,10)`); `restaurants.current_policy_version_id` es la vigente.
-- **Distribución:** `daily_distributions` (`DRAFT|CLOSED|VOIDED`, alcance `DAY` o `PERIOD` con `date_from`/`date_to`, sin superposición, totales ARS/USD), `tip_entries` (fecha de la propina, ARS/USD + cotización usada), `daily_distribution_items` (empleado, puesto, porción, horas, puntos, %, bruto, adelantos, final; todo en *snapshot*).
+- **Distribución:** `daily_distributions` (`DRAFT|CLOSED|VOIDED`, alcance `DAY` o `PERIOD` con `date_from`/`date_to`, sin superposición garantizada por una restricción de exclusión incluso ante concurrencia, totales ARS/USD), `tip_entries` (fecha de la propina, ARS/USD + cotización usada), `daily_distribution_items` (empleado, puesto, porción, horas, puntos, %, bruto, adelantos, final; todo en *snapshot*).
 - **Adelantos:** `advances` (con saldo pendiente y datos de anulación) + `advance_applications`.
 - **Liquidación (período):** `weekly_settlements` (`OPEN|CLOSED|VOIDED`, fijada a una versión de la política; al cerrar guarda `policy_snapshot` y `calc_version`), `period_policy_changes`, `period_hours`.
 - **Sobres:** `weekly_payments` (`PENDING|PREPARED|DELIVERED`, quién y cuándo entregó) + `weekly_payment_events` (historia inmutable de cada cambio, incluidas reversiones con motivo).

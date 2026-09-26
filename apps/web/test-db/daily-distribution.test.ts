@@ -221,7 +221,7 @@ describe('alcance DAY / PERIOD', () => {
     await db.fails(
       `UPDATE daily_distributions SET status = 'DRAFT', voided_at = NULL, voided_by = NULL,
          void_reason = NULL WHERE id = '${DIST}';`,
-      /IMMUTABLE|cannot overlap/,
+      /IMMUTABLE|ex_daily_distributions_no_overlap/,
     );
   });
 

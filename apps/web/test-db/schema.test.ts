@@ -144,7 +144,6 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       'trg_audit_log_no_truncate',
       'trg_daily_distribution_items_require_draft',
       'trg_daily_distributions_guard',
-      'trg_daily_distributions_no_overlap',
       'trg_ddi_hours_in_range',
       'trg_period_hours_guard',
       'trg_period_policy_changes_append_only',
@@ -167,17 +166,17 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
     ]);
   });
 
-  it('los índices únicos parciales y por expresión existen', async () => {
+  it('los índices únicos (parciales y por expresión) y el de exclusión existen', async () => {
     const rows = await db.rows<{ indexname: string; indexdef: string }>(
       `SELECT indexname, indexdef FROM pg_indexes
        WHERE schemaname = 'public'
-         AND indexname IN ('ux_daily_distributions_active', 'ux_positions_restaurant_name',
+         AND indexname IN ('ex_daily_distributions_no_overlap', 'ux_positions_restaurant_name',
            'ux_weekly_settlements_active')
        ORDER BY indexname`,
     );
     expect(rows).toHaveLength(3);
     const [daily, positions, weekly] = rows;
-    expect(daily?.indexdef).toMatch(/UNIQUE/);
+    expect(daily?.indexdef).toMatch(/USING gist/);
     expect(daily?.indexdef).toMatch(/WHERE/);
     expect(positions?.indexdef).toMatch(/UNIQUE/);
     expect(positions?.indexdef).toMatch(/lower\(/);

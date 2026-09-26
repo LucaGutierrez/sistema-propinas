@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { afterAll, afterEach, beforeAll, beforeEach, inject } from 'vitest';
 
 /*
@@ -32,7 +33,7 @@ const CONSTRAINTS_SQL = readFileSync(
 
 /** Aplica el DDL de Prisma + el SQL de restricciones y carga los datos de referencia. */
 async function createDatabase(ddl: string): Promise<PGlite> {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { btree_gist } });
   await db.exec(ddl);
   await db.exec(CONSTRAINTS_SQL);
   await db.exec(`

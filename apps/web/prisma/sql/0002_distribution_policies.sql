@@ -62,13 +62,21 @@ ALTER TABLE period_policy_changes
 ALTER TABLE period_hours
   ADD CONSTRAINT ck_period_hours_nonnegative CHECK (hours >= 0);
 
--- 7.2 Índices únicos
+-- 7.2 Repartos sin superposición e índices únicos
 
--- Un reparto vigente por restaurante y fecha de inicio (DAY: el día; PERIOD: el inicio del período).
--- Que no se superpongan rangos lo valida fn_daily_distributions_no_overlap.
-CREATE UNIQUE INDEX ux_daily_distributions_active
-  ON daily_distributions (restaurant_id, date_from)
-  WHERE status <> 'VOIDED';
+-- I13: los repartos vigentes de un restaurante no se superponen (con la estructura de pozo
+-- SINGLE_POOL hay un solo pozo por día o período). Restricción de exclusión: PostgreSQL la
+-- hace cumplir también entre transacciones concurrentes (la segunda espera a la primera y,
+-- si esta confirma, falla), en cualquier nivel de aislamiento. btree_gist permite combinar
+-- la igualdad de restaurant_id con el solapamiento de rangos en un índice GiST.
+-- Si en el futuro la política admite varios pozos, esta restricción incorporará la clave
+-- del pozo (p. ej. el equipo) en una migración nueva.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE daily_distributions
+  ADD CONSTRAINT ex_daily_distributions_no_overlap
+    EXCLUDE USING gist (restaurant_id WITH =, daterange(date_from, date_to, '[]') WITH &&)
+    WHERE (status <> 'VOIDED');
 
 -- El nombre del puesto es su identidad dentro del restaurante (sin distinguir mayúsculas).
 CREATE UNIQUE INDEX ux_positions_restaurant_name
@@ -90,31 +98,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 7.4 Repartos DAY/PERIOD: sin superposición de rangos, propinas dentro del rango y tope de horas
---     derivado del alcance (24 × días), no un límite de negocio.
-
-CREATE FUNCTION fn_daily_distributions_no_overlap() RETURNS trigger AS $$
-BEGIN
-  IF NEW.status <> 'VOIDED' AND EXISTS (
-       SELECT 1
-       FROM daily_distributions d
-       WHERE d.restaurant_id = NEW.restaurant_id
-         AND d.status <> 'VOIDED'
-         AND d.id <> NEW.id
-         AND d.date_from <= NEW.date_to
-         AND d.date_to >= NEW.date_from
-     )
-  THEN
-    RAISE EXCEPTION 'RULE: distributions of a restaurant cannot overlap (restaurant %, % to %)',
-      NEW.restaurant_id, NEW.date_from, NEW.date_to;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_daily_distributions_no_overlap
-  BEFORE INSERT OR UPDATE OF status, date_from, date_to, restaurant_id ON daily_distributions
-  FOR EACH ROW EXECUTE FUNCTION fn_daily_distributions_no_overlap();
+-- 7.4 Repartos DAY/PERIOD: propinas dentro del rango y tope de horas derivado del alcance
+--     (24 × días del rango, cualquiera sea su largo), no un límite de negocio.
 
 CREATE FUNCTION fn_tip_entries_in_range() RETURNS trigger AS $$
 BEGIN

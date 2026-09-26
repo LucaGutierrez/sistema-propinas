@@ -139,9 +139,23 @@ describe('datos demo', () => {
       advanceCents: 0n,
     }));
     const e10 = computeProvisionalDistribution(demo.result.totalCents, rowsE10);
-    expect(e10.items.map((i) => i.amountCents)).toEqual(
-      demo.result.items.map((i) => i.amountCents),
-    );
+    // Los 12 importes de la semana de Library (fórmula provisional), fijados como regresión.
+    const library = [
+      ['ivan', 4_061_388n],
+      ['nardelli', 1_624_555n],
+      ['roro', 6_382_180n],
+      ['marcos', 1_843_741n],
+      ['leo', 7_658_617n],
+      ['isaias', 5_105_744n],
+      ['agus-fulleda', 4_538_439n],
+      ['cami-noche', 709_131n],
+      ['agus-noche', 709_131n],
+      ['nahuel', 1_083_037n],
+      ['jesus', 902_531n],
+      ['jean', 180_506n],
+    ];
+    expect(demo.result.items.map((i) => [i.id, i.amountCents])).toEqual(library);
+    expect(e10.items.map((i) => [i.id, i.amountCents])).toEqual(library);
     expect(e10.items.map((i) => i.percentE2)).toEqual(demo.result.items.map((i) => i.percentE2));
   });
 

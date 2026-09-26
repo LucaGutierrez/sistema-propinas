@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { describe, expect, inject, it } from 'vitest';
 
 /*
@@ -77,7 +78,7 @@ describe('migraciones (prisma/migrations)', () => {
   });
 
   it('la migración de políticas no se aplica sobre datos existentes (guarda explícita)', async () => {
-    const db = new PGlite();
+    const db = new PGlite({ extensions: { btree_gist } });
     try {
       const [initial, policies] = migrationNames();
       await db.exec(migrationSql(initial ?? ''));
@@ -92,8 +93,8 @@ describe('migraciones (prisma/migrations)', () => {
   });
 
   it('aplicar las migraciones en orden produce exactamente la base que prueban los demás tests', async () => {
-    const fromMigrations = new PGlite();
-    const reference = new PGlite();
+    const fromMigrations = new PGlite({ extensions: { btree_gist } });
+    const reference = new PGlite({ extensions: { btree_gist } });
     try {
       for (const name of migrationNames()) {
         await fromMigrations.exec(migrationSql(name));

@@ -158,6 +158,15 @@ describe('CHECK: ítems de la distribución diaria', () => {
     );
   });
 
+  it('el tope sale del rango, no de un número fijo: un PERIOD de 3 días admite 72 horas', async () => {
+    await db.exec(dist(D1, '2026-09-21', { scope: 'PERIOD', to: '2026-09-23' }));
+    await db.exec(item(uuid(1), D1, ID.E1, { hours: '72' }));
+    await db.fails(
+      item(uuid(2), D1, ID.E2, { hours: '72.01' }),
+      /exceed the length of the distribution \(72 hours max\)/,
+    );
+  });
+
   it('acepta exactamente 24 horas y horas decimales', async () => {
     await db.exec(
       dist(D1, '2026-09-21') +
@@ -261,8 +270,8 @@ describe('unicidad', () => {
   });
 });
 
-describe('repartos vigentes sin superposición (trigger + índice único parcial)', () => {
-  const overlap = /distributions of a restaurant cannot overlap/;
+describe('I13: repartos vigentes sin superposición (restricción de exclusión)', () => {
+  const overlap = /ex_daily_distributions_no_overlap/;
 
   it('rechaza dos repartos vigentes el mismo día', async () => {
     await db.exec(dist(D1, '2026-09-21'));
@@ -283,11 +292,24 @@ describe('repartos vigentes sin superposición (trigger + índice único parcial
     );
   });
 
-  it('el índice único ux_daily_distributions_active respalda el trigger', async () => {
-    const [row] = await db.rows<{ def: string }>(
-      `SELECT indexdef AS def FROM pg_indexes WHERE indexname = 'ux_daily_distributions_active'`,
+  it('mover un reparto en borrador sobre otro también se rechaza', async () => {
+    await db.exec(dist(D1, '2026-09-21') + dist(uuid(101), '2026-09-22'));
+    await db.fails(
+      `UPDATE daily_distributions SET date_from = '2026-09-21', date_to = '2026-09-21'
+       WHERE id = '${uuid(101)}';`,
+      overlap,
     );
-    expect(row?.def).toMatch(/\(restaurant_id, date_from\) WHERE \(status <> 'VOIDED'/);
+  });
+
+  it('la restricción compara restaurante (=) y rango de fechas cerrado (&&), sin los anulados', async () => {
+    const [row] = await db.rows<{ def: string }>(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+       WHERE conname = 'ex_daily_distributions_no_overlap'`,
+    );
+    expect(row?.def).toMatch(/^EXCLUDE USING gist/);
+    expect(row?.def).toMatch(/restaurant_id WITH =/);
+    expect(row?.def).toMatch(/daterange\(date_from, date_to, '\[\]'::text\) WITH &&/);
+    expect(row?.def).toMatch(/WHERE \(\(?status <> 'VOIDED'/);
   });
 
   it('una distribución anulada libera el día para una nueva', async () => {
