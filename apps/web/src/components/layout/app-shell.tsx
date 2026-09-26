@@ -98,13 +98,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh">
       {/* Sidebar fija en escritorio */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 bg-sidebar text-sidebar-foreground lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 bg-sidebar text-sidebar-foreground lg:block print:hidden">
         <SidebarContent pathname={pathname} />
       </aside>
 
       {/* Menú deslizable en celular */}
       <div
-        className={cn('fixed inset-0 z-40 lg:hidden', menuOpen ? 'visible' : 'invisible')}
+        className={cn(
+          'fixed inset-0 z-40 lg:hidden print:hidden',
+          menuOpen ? 'visible' : 'invisible',
+        )}
         aria-hidden={!menuOpen}
       >
         <div
@@ -132,8 +135,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
       </div>
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur sm:px-6">
+      <div className="lg:pl-64 print:pl-0">
+        <header className="sticky top-0 z-20 flex h-16 print:hidden items-center gap-3 border-b bg-background/85 px-4 backdrop-blur sm:px-6">
           <Button
             variant="ghost"
             size="icon"

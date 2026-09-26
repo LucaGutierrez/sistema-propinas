@@ -1,4 +1,5 @@
 import { InfoIcon } from 'lucide-react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 const STEPS = [
@@ -24,7 +25,13 @@ export function FormulaCard({ className }: { className?: string }) {
           <p className="font-medium text-warning-foreground">Fórmula provisional</p>
           <p className="mt-1 text-muted-foreground">
             Todavía estamos validando la fórmula exacta de la planilla histórica. Los importes son
-            orientativos.
+            orientativos.{' '}
+            <Link
+              href="/reglas"
+              className="font-medium text-foreground underline underline-offset-2"
+            >
+              Ver qué falta decidir
+            </Link>
           </p>
           <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
             {STEPS.map(([term, definition]) => (

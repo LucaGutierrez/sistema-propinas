@@ -12,7 +12,7 @@ export function ViewAsBanner() {
   if (!viewAs || !venue) return null;
 
   return (
-    <div className="flex flex-col gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2.5 text-sm text-sky-900 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+    <div className="flex flex-col gap-2 border-b border-sky-200 bg-sky-50 print:hidden px-4 py-2.5 text-sm text-sky-900 sm:flex-row sm:items-center sm:justify-between sm:px-6">
       <p className="flex items-center gap-2">
         <EyeIcon className="size-4 shrink-0" />
         <span>

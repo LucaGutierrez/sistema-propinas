@@ -23,6 +23,8 @@ import { formatMonth, formatWeekRange, todayIso } from '@/lib/dates';
 import { formatMoneyShort } from '@/lib/decimal';
 import { monthlySummary, openWeek, sortedWeeks, weekTotal } from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
+import { envelopeSummary } from '@/lib/demo-store/envelopes';
+import type { Week } from '@/lib/demo-store/model';
 
 export function Dashboard() {
   const { venue, reset, perms, viewAs } = useDemoStore();
@@ -144,9 +146,9 @@ export function Dashboard() {
                     {formatMoneyShort(BigInt(lastClosed.result.totalFinalCents))}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    en {lastClosed.result.rows.length} sobres · pozo{' '}
-                    {formatMoneyShort(BigInt(lastClosed.result.totalCents))}
+                    pozo {formatMoneyShort(BigInt(lastClosed.result.totalCents))}
                   </p>
+                  <DeliveryProgress week={lastClosed} />
                 </div>
                 <div className="flex items-center gap-2">
                   <WeekStatusBadge status="CERRADA" />
@@ -203,5 +205,23 @@ function DemoResetBox({ onReset }: { onReset: () => void }) {
         )}
       </div>
     </>
+  );
+}
+
+/** Cuántos sobres de la semana ya se entregaron. */
+function DeliveryProgress({ week }: { week: Week }) {
+  const summary = envelopeSummary(week);
+  const withAmount = summary.total - summary.sinImporte;
+  const done = withAmount > 0 && summary.entregados === withAmount;
+  return (
+    <p
+      className={
+        done ? 'mt-1 text-sm font-medium text-primary' : 'mt-1 text-sm text-warning-foreground'
+      }
+    >
+      {done
+        ? 'Todos los sobres entregados'
+        : `${withAmount - summary.entregados} de ${withAmount} sobres por entregar · ${formatMoneyShort(summary.pendingCents)}`}
+    </p>
   );
 }

@@ -10,7 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatWeekRange, todayIso, addDays } from '@/lib/dates';
 import { formatMoney, formatMoneyShort, parseMoney } from '@/lib/decimal';
-import { openWeek, positionById, sortedWeeks } from '@/lib/demo-store/model';
+import { EnvelopeStatusBadge } from '@/components/week/envelopes-section';
+import { envelopeOf } from '@/lib/demo-store/envelopes';
+import { openWeek, positionById, sortedWeeks, type Week } from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
 
 /** Lo de una sola persona: sus sobres, sus horas y sus adelantos. Nada de los demás. */
@@ -124,9 +126,16 @@ export function MyEnvelopes() {
                         : ''}
                     </p>
                   </div>
-                  <p className="tabular text-lg font-semibold">
-                    {formatMoney(BigInt(row.finalCents))}
-                  </p>
+                  <div className="text-right">
+                    <p className="tabular text-lg font-semibold">
+                      {formatMoney(BigInt(row.finalCents))}
+                    </p>
+                    <MyEnvelopeStatus
+                      week={week}
+                      staffId={staffId}
+                      hasAmount={BigInt(row.finalCents) > 0n}
+                    />
+                  </div>
                 </li>
               ) : null,
             )}
@@ -134,5 +143,31 @@ export function MyEnvelopes() {
         )}
       </Card>
     </>
+  );
+}
+
+const DELIVERED_AT = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+
+/** Estado del propio sobre: si ya lo entregaron, cuándo. */
+function MyEnvelopeStatus({
+  week,
+  staffId,
+  hasAmount,
+}: {
+  week: Week;
+  staffId: string;
+  hasAmount: boolean;
+}) {
+  if (!hasAmount) return <p className="text-xs text-muted-foreground">Sin importe</p>;
+  const envelope = envelopeOf(week, staffId);
+  return (
+    <div className="mt-1 flex flex-col items-end gap-0.5">
+      <EnvelopeStatusBadge status={envelope.status} />
+      {envelope.status === 'ENTREGADO' && envelope.deliveredAt ? (
+        <span className="text-xs text-muted-foreground">
+          {DELIVERED_AT.format(new Date(envelope.deliveredAt))}
+        </span>
+      ) : null}
+    </div>
   );
 }

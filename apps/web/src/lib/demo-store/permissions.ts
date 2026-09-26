@@ -15,6 +15,13 @@ export interface Permissions {
   manageStaff: boolean;
   /** Invitar y cambiar permisos. */
   manageAccess: boolean;
+  /**
+   * Preparar y entregar sobres. PENDIENTE DE DECIDIR si el Editor también puede: por ahora,
+   * solo el Encargado (igual que revertir una entrega, que sí está decidido: DATABASE.md, A3).
+   */
+  handleEnvelopes: boolean;
+  /** Revertir una entrega (con motivo). Solo el Encargado. */
+  revertDelivery: boolean;
   /** Para "Solo lo suyo": su ficha en el personal. */
   ownStaffId: string | null;
 }
@@ -43,6 +50,8 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         closeWeek: true,
         manageStaff: true,
         manageAccess: true,
+        handleEnvelopes: true,
+        revertDelivery: true,
         ownStaffId,
       };
     case 'EDITOR':
@@ -53,6 +62,8 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         closeWeek: false,
         manageStaff: false,
         manageAccess: false,
+        handleEnvelopes: false,
+        revertDelivery: false,
         ownStaffId,
       };
     case 'LECTOR':
@@ -63,6 +74,8 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         closeWeek: false,
         manageStaff: false,
         manageAccess: false,
+        handleEnvelopes: false,
+        revertDelivery: false,
         ownStaffId,
       };
     case 'PROPIO':
@@ -73,6 +86,8 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         closeWeek: false,
         manageStaff: false,
         manageAccess: false,
+        handleEnvelopes: false,
+        revertDelivery: false,
         ownStaffId,
       };
   }

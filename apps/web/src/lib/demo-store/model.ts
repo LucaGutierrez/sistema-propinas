@@ -11,6 +11,7 @@ import { formatScaled, parseDecimal, parseMoney } from '@/lib/decimal';
 import { calculateFromRows, type DistributionFormRow } from '@/lib/distribution/form';
 import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
 import { RESTAURANT_NAME, SEED_POSITIONS, SEED_STAFF, SEED_WEEK } from '@/lib/demo/data';
+import type { Envelope } from './envelopes';
 
 export type WeekStatus = 'ABIERTA' | 'CERRADA';
 
@@ -64,6 +65,8 @@ export interface Week {
   carried: Record<string, string>;
   note?: string;
   result?: WeekResult;
+  /** Estado de cada sobre (por staffId), después del cierre. Ver envelopes.ts. */
+  envelopes?: Record<string, Envelope>;
 }
 
 /** Un local (p. ej. "Faena Library"): su propio personal, puestos, semanas e historial. */

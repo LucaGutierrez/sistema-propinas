@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (verificación de solo lectura de Neon: la migración inicial está aplicada, sin drift y sin migraciones pendientes).
+Última actualización: 2026-09-26 (Fase 1 en curso: interfaz GUTIP como demo en el navegador — semanas, sobres, locales, permisos y reglas pendientes. Sin cambios en Prisma, migraciones ni Neon desde la Fase 0).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [README.md](README.md) (comandos).
@@ -15,7 +15,7 @@ Una aplicación web para gestionar y distribuir propinas entre el personal de re
 
 Reflejar exactamente el flujo real del restaurante:
 
-- La propina **se calcula por día** (distribución diaria) pero **se paga por semana**.
+- La propina **se calcula por día** (distribución diaria) pero **se paga por semana**. **(En revisión, 2026-09-26):** la planilla real reparte con las horas **acumuladas de la semana**; cómo se combina eso con el pozo diario es la decisión pendiente P1 (§10).
 - Tres conceptos distintos, ninguno reemplaza a otro:
   - **DAILY DISTRIBUTION**: calcula la propina de un día (horas × peso del puesto). Es la unidad de cálculo.
   - **WEEKLY SETTLEMENT**: acumula las distribuciones diarias cerradas de una semana. Suma, no recalcula.
@@ -28,8 +28,8 @@ Reflejar exactamente el flujo real del restaurante:
 
 ## 3. Arquitectura elegida
 
-- **Monorepo pnpm** con dos piezas: `packages/tip-engine` (motor de cálculo) y `apps/web` (aplicación; por ahora solo Prisma y sus tests).
-- **Monolito full-stack** (Next.js, se agrega en la Fase 1) con capas `UI → actions → services → (tip-engine, repositories)`.
+- **Monorepo pnpm** con dos piezas: `packages/tip-engine` (motor de cálculo) y `apps/web` (aplicación Next.js 15 + Prisma y sus tests).
+- **Monolito full-stack** (Next.js 15 App Router, instalado en la Fase 1) con capas `UI → actions → services → (tip-engine, repositories)`. Hoy la UI funciona como **demo en el navegador** (`localStorage`), sin servidor ni base: ver §6.2.
 - **Motor de cálculo independiente**: TypeScript puro, `BigInt`, sin dependencias, sin Next.js/Prisma/React/base de datos/APIs de Node. Recibe y devuelve objetos simples; la app traduce filas de Prisma a tipos del motor. La vista previa y el cierre usan la misma función.
 - **Aritmética exacta**: dinero en centavos (`bigint`), horas y pesos ×100, cotización ×10⁶. Reparto por **mayor resto** (la suma de los pagos coincide siempre con el total).
 - **Pozo único o por equipo** sin rehacer nada: `restaurants.pool_mode` (`SINGLE` | `PER_TEAM`, sin valor por defecto) y `daily_distributions.team_id` opcional. El motor no conoce equipos.
@@ -47,7 +47,8 @@ Reflejar exactamente el flujo real del restaurante:
 | ORM | Prisma 6.19 (+ SQL propio para CHECK/índices parciales/triggers) |
 | Calidad | ESLint 10 (reglas de pureza del motor), Prettier, GitHub Actions |
 | Tests de BD | PGlite (PostgreSQL en WebAssembly) con Vitest |
-| **Fase 1 (aún no instalado)** | Next.js 15 App Router, Tailwind + shadcn/ui, React Hook Form + Zod, Auth.js (o Better Auth), Playwright, email transaccional (Resend recomendado) |
+| **Fase 1 (instalado)** | Next.js 15.5 App Router, React 19, Tailwind 4, componentes shadcn/ui (escritos a mano, `components.json` listo para el CLI), lucide-react, Vitest para la lógica de la app |
+| **Fase 1 (pendiente)** | Better Auth (A2), React Hook Form + Zod, Playwright, email transaccional (A1; Resend recomendado) |
 
 Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta TS 7) y Prisma 6 (se evitan cambios de la serie 7/8 hasta la Fase 1). pnpm 12 bloquea scripts de instalación por defecto; `pnpm-workspace.yaml` autoriza solo `prisma`, `@prisma/client` y `@prisma/engines`.
 
@@ -69,7 +70,9 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 - **(2026-09-25)** Sobres: `DELIVERED` congela `delivered_*`, `delivery_note` y `prepared_*` mientras siga entregado; un error en la entrega se corrige con la reversión `DELIVERED → PREPARED`, que solo limpia la entrega (incluida la nota) y no toca `prepared_*`; `VOIDED` congela todo el sobre.
 - **(2026-09-25)** Liquidaciones: `CLOSED` y `VOIDED` congelan toda la fila (incluidos `notes`, `closed_*`, `voided_*`); `CLOSED → VOIDED` solo completa `voided_*`.
 
-## 6. Qué se implementó hasta ahora (Fase 0)
+## 6. Qué se implementó hasta ahora
+
+### 6.1 Fase 0 (base de datos y motor)
 
 **Repositorio en GitHub** (`LucaGutierrez/sistema-propinas`). En `main`: `d3ac4d8` (inicial), `3ab16a8` (este archivo) y `1e7f0f4` (migración inicial e invariantes). El CI corrió en verde sobre `1e7f0f4`. Los tests contra PostgreSQL real (rama `claude/proyecto-continuacion-j1jaup`) se integraron a `main` con el PR #1 (`cb41b3c`).
 
@@ -102,6 +105,31 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 **Verificado el 2026-09-25**: `lint`, `typecheck`, `test` (257 + 3 `todo`), `test:db` (206), `test:pg` (11, sobre PostgreSQL 16 local y temporal), `prisma validate`, `prisma generate` y `format:check` sin errores. `test:pg` se ejecutó **localmente** contra un PostgreSQL temporal, no en GitHub. El job `postgres` (PostgreSQL 18) fue agregado al CI pero **todavía no fue ejecutado por GitHub Actions**: el workflow solo corre con push a `main` o en un Pull Request, y el push de la rama no lo dispara.
 
+### 6.2 Fase 1 — interfaz GUTIP (demo en el navegador)
+
+Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de esta sesión (sobres, reglas). **No toca Prisma, migraciones, Neon ni `packages/tip-engine`.** Todo se guarda en `localStorage` del navegador (`gutip-demo-v2`, con migración del formato anterior `gutip-demo-v1`); cada navegador tiene su copia y no se comparte.
+
+**Terminado (funciona y tiene tests; reglas ya decididas):**
+- **Estructura de la app:** barra lateral, encabezado, menú deslizable en celular, tarjetas de resumen, estados vacíos, marca GUTIP, textos en español.
+- **Locales** ("Mis locales"): varios locales por cuenta (p. ej. Faena Library / Faena Mercado), cada uno con su personal, puestos, semanas e historial; selector en la barra lateral; crear (opcionalmente copiando puestos), renombrar.
+- **Personal y puestos:** agregar personas, crear puestos con factor, cambiar de puesto, dar de baja / reactivar (nunca se borra: las semanas cerradas conservan a la persona).
+- **Semana:** empezar semana (fecha sugerida), cargar el pozo de cada día, horas y adelantos; vista previa; cerrar semana (queda congelada).
+- **Sobres** (reglas de DATABASE.md): uno por persona con propina; `Pendiente → Preparado → Entregado` con fecha/hora y quién; deshacer preparación y **revertir entrega con motivo obligatorio (≥ 10 caracteres)**, que vuelve a Preparado sin tocar la preparación; bitácora por sobre; "Preparar todos"; sobres sin importe marcados como tales; **planilla imprimible con columna de firma**.
+- **Saldo de adelantos:** lo que un adelanto no alcanza a descontar pasa a la semana siguiente.
+- **Historial:** propina generada por mes, semanas cerradas y total en sobres.
+- **Acceso por local:** cuatro permisos (Encargado, Editor, Solo ver, Solo lo suyo), invitaciones pendientes, cambiar permiso, quitar acceso, **"Ver como…"** para probar lo que ve cada uno. Las secciones sin permiso muestran "No tenés acceso" aunque se escriba la URL. Reglas en `apps/web/src/lib/demo-store/permissions.ts`.
+- **Mis sobres:** cada persona ve solo sus sobres (con estado de entrega), sus horas y adelantos.
+- **Reglas de cálculo** (`/reglas`): muestra la fórmula provisional y cada decisión pendiente (qué hace hoy la demo y qué falta decidir). La lista vive en `apps/web/src/lib/demo/pending-decisions.ts`.
+
+**En demo / provisional (funciona, pero no es definitivo):**
+- **Fórmula PROVISIONAL** (`apps/web/src/lib/distribution/provisional-formula.ts`, `FORMULA_STATUS = 'PROVISIONAL'`): pozo = suma de los días; puntos = horas semanales × factor; reparto por mayor resto al centavo; sobre = importe − adelantos. Vive en la app, **no** en el motor, cuyo contrato no se cambió.
+- Los factores demo (0,014 / 0,022 / 0,007) son los redondeados que muestra la planilla: los importes difieren de ella (ver P3).
+- Permisos e invitaciones se aplican **solo en la pantalla** (no hay servidor); las invitaciones quedan pendientes porque nadie puede aceptarlas todavía.
+- Quién aparece como autor de una acción es "Encargado" o la persona simulada con "Ver como…".
+- Los datos demo usan los **nombres reales** de la planilla (`apps/web/src/lib/demo/data.ts`): anonimizar si el repositorio es público.
+
+**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 51, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo) y reglas. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:
@@ -129,12 +157,16 @@ DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma va
 DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma generate
 # Estado de Neon (solo lectura; usa apps/web/.env). `@propinas/web` no tiene script "prisma": usar exec.
 pnpm --filter @propinas/web exec prisma migrate status
+# Interfaz GUTIP (demo): http://localhost:3000
+pnpm --filter @propinas/web dev
+pnpm --filter @propinas/web build
 ```
 
 ## 9. Qué NO debemos hacer todavía
 
-- No construir la interfaz ni instalar Next.js hasta tener aprobación explícita de la Fase 1.
-- No implementar login, registro, verificación de email ni recuperación de contraseña antes de aprobar la Fase 1 (A1 y A2 ya están decididos).
+- ~~No construir la interfaz ni instalar Next.js~~ (Fase 1 aprobada: la interfaz existe como demo).
+- No implementar login, registro, verificación de email ni recuperación de contraseña, ni tocar `schema.prisma`, hasta que el usuario apruebe el plan de Better Auth + persistencia (§11).
+- No convertir la fórmula provisional en regla definitiva ni cambiar el contrato del motor hasta resolver P1–P6 (§10).
 - No aplicar migraciones en Neon ni modificar esa base sin autorización explícita del usuario.
 - No modificar el motor de cálculo ni el esquema "por costumbre": cualquier cambio debe pasar `test`, `test:db` y actualizar `DATABASE.md`.
 - No usar `Number`, `Math`, `Date` ni floats en `packages/tip-engine` (ESLint y los tests lo impiden).
@@ -151,22 +183,46 @@ pnpm --filter @propinas/web exec prisma migrate status
 | A1 | Proveedor de email en producción | **Postergado (2026-09-25).** No hay dominio propio todavía. Se desarrolla con `ConsoleMailer` detrás de la interfaz `Mailer`; el proveedor (Resend recomendado, requiere dominio) se elige antes de publicar. No bloquea la Fase 1. |
 | A2 | Auth.js vs Better Auth | **Decidido (2026-09-25): Better Auth.** Trae verificación de email y reset. Pendiente al empezar la Fase 1: conciliar sus tablas (`user`, `session`, `account`, `verification`) con `users` y `auth_tokens` del esquema actual, y actualizar `DATABASE.md`. |
 | A3 | Autorización de reversiones | Hoy es por rol (`OWNER`/`ADMIN` ejecutan y autorizan). Si se prefiere "solicitud + aprobación" de dos personas, el modelo ya separa `performed_by` y `authorized_by`. |
-| A4 | Verificación de la fórmula | `puntos = horas × peso del puesto` y reparto proporcional salen de la descripción inicial. **No se pudo ver la captura del Excel** (no llegó a la conversación); reenviarla o colocar el `.xlsx` en `reference/` para confirmarlo. |
-| D1 | Pozo del negocio real | Confirmar si el restaurante usa pozo único o pozos por equipo. El modelo soporta ambos; no bloquea nada. |
+| A4 | Verificación de la fórmula | **Parcialmente resuelto (2026-09-26).** Se analizó la foto de la planilla (`reference/`, ignorada por git): confirma el reparto proporcional a horas × factor y el descuento del adelanto. Diferencias con el motor: horas semanales (> 24), factores con más decimales y distintos dentro de un puesto, redondeo a pesos. Quedan P1–P7. |
+| D1 | Pozo del negocio real | **Reemplazado por P2** (porcentajes por grupo). |
+
+**Reglas de negocio pendientes de la planilla** (la demo usa un comportamiento provisional para cada una; la misma lista se ve en la pantalla "Reglas de cálculo"):
+
+| # | Tema | Hoy en la demo (provisional) | Falta decidir |
+|---|---|---|---|
+| P1 | Pozo diario y horas semanales | Se anota el pozo de cada día; al cerrar la semana se reparte la suma con las horas totales de la semana. | ¿Reparto por día (con horas semanales o acumuladas hasta ese día) con snapshot diario? ¿Cuándo se congelan las horas? |
+| P2 | Porcentajes por grupo | No hay grupos: todo el pozo se reparte junto por puntos. | Porcentaje de cada grupo; qué pasa si un grupo no trabajó ese día. |
+| P3 | Puntos y factores | Horas × factor del puesto (hasta 4 decimales), factores redondeados de la planilla. | ¿Factor por puesto o por persona? ¿Valor exacto (p. ej. 0,65 ÷ 45)? |
+| P4 | Redondeo | Al centavo, mayor resto. | ¿Pesos enteros? (con mayor resto en pesos se reproduce exacta la planilla). |
+| P5 | Recepción y Cocina | No se usan (en 0 en la planilla). | ¿Fuentes del mismo pozo o pozos aparte? |
+| P6 | Adelantos en el tiempo | Se descuentan del sobre de la semana; el saldo pasa a la siguiente. | ¿De toda la semana o solo desde su fecha? ¿Registro uno por uno con fecha? |
+| P7 | Tests del Excel | 3 `todo` en el motor. | Se completan con P1–P4 resueltos (y el `.xlsx`, no solo la foto). |
+| P8 | Quién prepara y entrega sobres | Solo el Encargado (revertir: decidido, A3). | ¿El Editor también puede? |
 | — | Verificación de email obligatoria | Propuesta: el usuario no accede a la app hasta verificar el correo (con opción de reenviar). Confirmar. |
 | — | Regla de días fuera de una liquidación cerrada | Una distribución con fecha dentro de una semana ya liquidada se rechaza hasta anular la liquidación. Confirmar que es lo deseado. |
 | — | Versiones de PostgreSQL | Resuelto: Neon ofrece 18.6 y PGlite 18.3 (misma versión mayor). |
 | — | Tipos de ítem por día | Un ítem por empleado por distribución (si cambia de puesto en el día se carga el principal). Limitación conocida; extensión posible. |
 
+## 11. Pendiente para Better Auth + persistencia real
+
+Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**). Resumen:
+
+- **Better Auth, solo el núcleo** (email + contraseña, sesiones, verificación, recuperación). Restaurantes, membresías e invitaciones quedan como tablas propias (no el plugin de organizaciones).
+- **Tablas nuevas:** `sessions`, `accounts`, `verifications` (y `auth_rate_limits`), `invitations`. Se adapta `users` (sin `password_hash`; `email_verified` booleano); se eliminan `auth_tokens` y `rate_limits`. Confirmar los nombres exactos con el CLI de Better Auth de la versión instalada.
+- **Permisos:** `MembershipRole` pasa a `OWNER, MANAGER, EDITOR, VIEWER, SELF` (Dueño, Encargado, Editor, Solo ver, Solo lo suyo); `memberships.employee_id` para vincular cuenta ↔ empleado; un único `OWNER` por restaurante.
+- **Servidor:** rutas `/l/[restaurantId]/…`, `requireAccess(restaurantId, capacidad)` en cada página y acción, repositorios que reciben el contexto de acceso (filtran por `employee_id` para "Solo lo suyo"), 404 a quien no es miembro. Reutiliza la matriz de `permissions.ts`.
+- **Migraciones separadas:** M2 (acceso: no depende de la fórmula) y M3 (distribución: después de P1–P6). Cada una con guarda "tablas vacías", primero en una rama de Neon, verificación de drift y tests (`test:db`, `test:pg`, por rol, Playwright).
+- **Bloqueantes externos:** A1 (proveedor de email) para recuperar contraseñas en producción.
+
 ---
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada del lado de la base (Neon migrado y verificado sin drift). El CI en GitHub está confirmado en verde. Quedan las decisiones de negocio pendientes antes de aprobar la Fase 1.**
+**Cuando retomemos: la Fase 0 está cerrada (Neon migrado sin drift, CI en verde). La Fase 1 avanza como demo en el navegador; la persistencia real espera la aprobación del plan de §11 y las decisiones P1–P6.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (257), `pnpm test:db` (206) y `pnpm test:pg` (11) en verde.
-2. ~~**Verificar el CI real**~~: confirmado el 2026-09-26; los jobs `check` y `postgres` (PostgreSQL 18) corren en verde sobre `main`.
-3. **Pendientes no bloqueantes:** Excel real (A4, los 3 `todo`), pozo del negocio (D1) y las confirmaciones de la sección 10.
-4. **Fase 1, paso 1** (solo con aprobación explícita): scaffold de Next.js en `apps/web` + Better Auth (conciliar sus tablas con `users`/`auth_tokens`), siguiendo el orden del MVP. Al escribir los servicios de cierre, respetar el protocolo de bloqueo que prueba `test:pg` (`FOR UPDATE` sobre la distribución y los adelantos; validar la mezcla de pozos dentro de la transacción).
+1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 51 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
+2. **Decisiones de negocio:** P1–P6 y P8 (§10), A1. Se pueden revisar en la pantalla "Reglas de cálculo".
+3. **Demo — próximos pasos propuestos (requieren confirmación porque cambian la estructura de la demo):** adelantos como movimientos individuales con fecha (P6) y anular / rehacer una semana cerrada (regla ya aprobada en DATABASE.md, solo si ningún sobre está entregado).
+4. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon.
 
-No se avanza a la Fase 1 sin que el usuario lo apruebe.
+No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.
