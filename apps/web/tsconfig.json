@@ -1,8 +1,32 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "jsx": "preserve",
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "esModuleInterop": true
   },
-  "include": ["test-db", "test-pg", "vitest.db.config.ts", "vitest.pg.config.ts"]
+  "include": [
+    "src",
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "next.config.ts",
+    "vitest.config.ts",
+    "test-db",
+    "test-pg",
+    "vitest.db.config.ts",
+    "vitest.pg.config.ts"
+  ],
+  "exclude": ["node_modules", "src/generated"]
 }

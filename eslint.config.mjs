@@ -1,4 +1,6 @@
 import js from '@eslint/js';
+import nextPlugin from '@next/eslint-plugin-next';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 const FORBIDDEN_IN_ENGINE = [
@@ -24,6 +26,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/.next/**',
+      '**/next-env.d.ts',
       '**/coverage/**',
       'apps/web/src/generated/**',
       'apps/web/prisma/migrations/**',
@@ -32,9 +35,20 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['**/*.ts', '**/*.mts'],
+    files: ['**/*.ts', '**/*.mts', '**/*.tsx'],
     rules: {
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
+    },
+  },
+  // Aplicación Next.js (apps/web/src). Los tests de base de datos no usan React.
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks, '@next/next': nextPlugin },
+    settings: { next: { rootDir: 'apps/web' } },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs['core-web-vitals'].rules,
     },
   },
   // El motor de cálculo: TypeScript puro, BigInt, sin floats ni APIs de plataforma.
