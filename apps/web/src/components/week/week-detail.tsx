@@ -23,7 +23,10 @@ import { findWeek, weekTotal } from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
 import { closedRowsView, closedTotalsView } from '@/lib/demo-store/views';
 import { envelopeSummary } from '@/lib/demo-store/envelopes';
+import { AdvancesCard } from './advances-card';
 import { EnvelopesPrintSheet, EnvelopesSection } from './envelopes-section';
+import { RevisionNotice } from './revision-notice';
+import { VoidWeekCard } from './void-week-card';
 
 const CLOSED_AT = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -124,6 +127,7 @@ export function WeekDetail({ weekId }: { weekId: string }) {
         </div>
 
         {week.note ? <p className="mt-4 text-sm text-muted-foreground">{week.note}</p> : null}
+        <RevisionNotice week={week} />
 
         <EnvelopesSection week={week} rows={rows} />
 
@@ -159,7 +163,9 @@ export function WeekDetail({ weekId }: { weekId: string }) {
           </Card>
         </div>
 
+        <AdvancesCard venue={venue} week={week} className="mt-6" />
         <FormulaCard className="mt-6" />
+        <VoidWeekCard venue={venue} week={week} />
       </div>
     </>
   );

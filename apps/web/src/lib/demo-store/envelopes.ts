@@ -15,7 +15,12 @@ import type { ClosedRow, Outcome, Venue, Week } from './model';
 export type EnvelopeStatus = 'PENDIENTE' | 'PREPARADO' | 'ENTREGADO';
 
 export type EnvelopeEventType =
-  'PREPARADO' | 'PREPARACION_DESHECHA' | 'ENTREGADO' | 'ENTREGA_REVERTIDA';
+  | 'PREPARADO'
+  | 'PREPARACION_DESHECHA'
+  | 'ENTREGADO'
+  | 'ENTREGA_REVERTIDA'
+  /** Se anuló el cierre de la semana (ver revisions.ts). */
+  | 'ANULADO';
 
 export interface EnvelopeEvent {
   type: EnvelopeEventType;

@@ -44,7 +44,8 @@ import {
   closeWeek,
   openWeek,
   positionById,
-  setAdvance,
+  activeAdvances,
+  advanceTotal,
   setDailyTip,
   setHours,
   sortedWeeks,
@@ -56,6 +57,8 @@ import {
 } from '@/lib/demo-store/model';
 import { newId, useDemoStore } from '@/lib/demo-store/store';
 import { previewRowsView } from '@/lib/demo-store/views';
+import { AdvancesCard } from './advances-card';
+import { RevisionNotice } from './revision-notice';
 import type { ProvisionalResult } from '@/lib/distribution/provisional-formula';
 import { cn } from '@/lib/utils';
 
@@ -126,7 +129,11 @@ function StartWeek({ venue }: { venue: Venue }) {
           <Button
             size="lg"
             className="w-full"
-            onClick={() => setError(apply((s) => startWeek(s, startDate, newId('semana'))))}
+            onClick={() =>
+              setError(
+                apply((s) => startWeek(s, startDate, newId('semana'), new Date().toISOString())),
+              )
+            }
           >
             <CalendarPlusIcon />
             Empezar semana
@@ -243,6 +250,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
       </div>
 
       {week.note ? <p className="mt-4 text-sm text-muted-foreground">{week.note}</p> : null}
+      <RevisionNotice week={week} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5">
         {/* Pozo diario */}
@@ -335,7 +343,10 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                 ) : null}
                 {activeStaff.map((member) => {
                   const position = positionById(venue, member.positionId);
-                  const carried = week.carried[member.id];
+                  const advance = advanceTotal(week, member.id);
+                  const carried = activeAdvances(week)
+                    .filter((e) => e.staffId === member.id && e.origin === 'SALDO_ANTERIOR')
+                    .reduce((sum, e) => sum + BigInt(e.amountCents), 0n);
                   return (
                     <TableRow key={member.id}>
                       <TableCell className="pl-5 font-medium">{member.name}</TableCell>
@@ -361,21 +372,15 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                           }
                         />
                       </TableCell>
-                      <TableCell className="py-1.5 pr-5">
-                        <Input
-                          aria-label={`Adelanto de ${member.name}`}
-                          inputMode="decimal"
-                          placeholder="0"
-                          className="tabular ml-auto h-8 w-28 text-right"
-                          value={week.advances[member.id] ?? ''}
-                          disabled={readOnly}
-                          onChange={(event) =>
-                            edit((s) => setAdvance(s, week.id, member.id, event.target.value))
-                          }
-                        />
-                        {carried ? (
-                          <p className="mt-1 text-right text-xs text-warning-foreground">
-                            incluye saldo anterior {formatMoney(BigInt(carried))}
+                      <TableCell className="tabular py-1.5 pr-5 text-right">
+                        {advance > 0n ? (
+                          formatMoney(advance)
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                        {carried > 0n ? (
+                          <p className="mt-0.5 text-xs text-warning-foreground">
+                            incluye saldo anterior {formatMoney(carried)}
                           </p>
                         ) : null}
                       </TableCell>
@@ -394,6 +399,8 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
           </div>
         </Card>
       </div>
+
+      <AdvancesCard venue={venue} week={week} className="mt-6" />
 
       {/* Acciones */}
       <div className="sticky bottom-3 z-10 mt-6">

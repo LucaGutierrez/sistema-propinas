@@ -9,10 +9,16 @@ import { PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatWeekRange, todayIso, addDays } from '@/lib/dates';
-import { formatMoney, formatMoneyShort, parseMoney } from '@/lib/decimal';
+import { formatMoney, formatMoneyShort } from '@/lib/decimal';
 import { EnvelopeStatusBadge } from '@/components/week/envelopes-section';
 import { envelopeOf } from '@/lib/demo-store/envelopes';
-import { openWeek, positionById, sortedWeeks, type Week } from '@/lib/demo-store/model';
+import {
+  advanceTotal,
+  openWeek,
+  positionById,
+  sortedWeeks,
+  type Week,
+} from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
 
 /** Lo de una sola persona: sus sobres, sus horas y sus adelantos. Nada de los demás. */
@@ -55,7 +61,7 @@ export function MyEnvelopes() {
     .filter(({ week }) => addDays(week.startDate, 6).slice(0, 7) === thisMonth)
     .reduce((sum, { row }) => sum + BigInt(row?.finalCents ?? '0'), 0n);
   const last = closed[0];
-  const currentAdvance = current ? (parseMoney(current.advances[staffId] ?? '') ?? 0n) : 0n;
+  const currentAdvance = current ? advanceTotal(current, staffId) : 0n;
 
   return (
     <>

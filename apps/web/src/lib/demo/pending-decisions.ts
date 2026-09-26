@@ -53,9 +53,9 @@ export const PENDING_DECISIONS: readonly PendingDecision[] = [
     id: 'P6',
     topic: 'Aplicación de adelantos en el tiempo',
     today:
-      'Los adelantos cargados en la semana se descuentan del sobre de esa semana; lo que no alcanza pasa como saldo a la siguiente.',
+      'Cada adelanto se registra con su fecha, pero se descuentan todos del sobre de esa semana sin mirar la fecha; lo que no alcanza pasa como saldo a la siguiente.',
     question:
-      '¿Un adelanto se descuenta de toda la semana o solo de lo generado desde su fecha? ¿Se registran uno por uno con fecha?',
+      '¿Un adelanto se descuenta de toda la semana o solo de lo generado desde su fecha? ¿Puede quedar un adelanto para descontar en una semana posterior a elección?',
   },
   {
     id: 'P7',

@@ -12,16 +12,28 @@ import {
 import {
   closeWeek,
   seedVenue,
-  setAdvance,
   setDailyTip,
   setHours,
   startWeek,
   type Outcome,
   type Venue,
 } from './model';
+import { addAdvance } from './advances';
 import { permissionsFor } from './permissions';
 
 const AT = '2026-09-26T12:00:00.000Z';
+
+/** Carga un adelanto (movimiento) el primer día de la semana de prueba. */
+const adv = (venue: Venue, weekId: string, staffId: string, amount: string, date = '2026-09-21') =>
+  addAdvance(venue, weekId, {
+    id: `a-${weekId}-${staffId}-${amount}`,
+    staffId,
+    date,
+    amount,
+    note: '',
+    by: 'Encargado',
+    at: AT,
+  });
 const WEEK = 'semana-planilla';
 const REASON = 'Se entregó al empleado equivocado';
 
@@ -111,12 +123,12 @@ describe('sobres', () => {
   });
 
   it('solo en semanas cerradas, y un sobre sin importe no se prepara', () => {
-    let v = ok(startWeek(venue, '2026-09-21', 'w1'));
+    let v = ok(startWeek(venue, '2026-09-21', 'w1', AT));
     expect(err(prepareEnvelope(v, 'w1', 'roro', 'Encargado', AT))).toMatch(/cerrar la semana/);
     v = ok(setDailyTip(v, 'w1', '2026-09-21', '10.000'));
     v = ok(setHours(v, 'w1', 'roro', '8'));
     v = ok(setHours(v, 'w1', 'marcos', '8'));
-    v = ok(setAdvance(v, 'w1', 'marcos', '9.000'));
+    v = ok(adv(v, 'w1', 'marcos', '9.000'));
     v = ok(closeWeek(v, 'w1', AT));
     const week = weekOf(v, 'w1');
     expect(envelopeSummary(week)).toMatchObject({ total: 2, sinImporte: 1, pendientes: 1 });

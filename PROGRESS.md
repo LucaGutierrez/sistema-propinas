@@ -115,7 +115,8 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 - **Personal y puestos:** agregar personas, crear puestos con factor, cambiar de puesto, dar de baja / reactivar (nunca se borra: las semanas cerradas conservan a la persona).
 - **Semana:** empezar semana (fecha sugerida), cargar el pozo de cada día, horas y adelantos; vista previa; cerrar semana (queda congelada).
 - **Sobres** (reglas de DATABASE.md): uno por persona con propina; `Pendiente → Preparado → Entregado` con fecha/hora y quién; deshacer preparación y **revertir entrega con motivo obligatorio (≥ 10 caracteres)**, que vuelve a Preparado sin tocar la preparación; bitácora por sobre; "Preparar todos"; sobres sin importe marcados como tales; **planilla imprimible con columna de firma**.
-- **Saldo de adelantos:** lo que un adelanto no alcanza a descontar pasa a la semana siguiente.
+- **Registro de adelantos:** cada adelanto es un movimiento (persona, fecha dentro de la semana, monto, nota, quién y cuándo). No se borra: se anula con motivo (≥ 10 caracteres) y queda tachado en el registro. Lo que no alcanza a descontarse pasa a la semana siguiente como movimiento "Saldo anterior". Los datos guardados con el formato anterior (un monto por persona) se convierten solos.
+- **Anular y rehacer una semana cerrada** (regla de DATABASE.md §6): solo si ningún sobre está entregado y con motivo. La semana vuelve a quedar abierta con sus datos, el cierre anulado se guarda completo (revisión, sobres con evento "Semana anulada", quién, cuándo, motivo) y al volver a cerrarla se generan sobres nuevos. Solo se puede anular la **última semana registrada** del local, para no dejar inconsistente el saldo de adelantos que ya pasó a otra semana (criterio de "anular en orden inverso", como los adelantos en la base).
 - **Historial:** propina generada por mes, semanas cerradas y total en sobres.
 - **Acceso por local:** cuatro permisos (Encargado, Editor, Solo ver, Solo lo suyo), invitaciones pendientes, cambiar permiso, quitar acceso, **"Ver como…"** para probar lo que ve cada uno. Las secciones sin permiso muestran "No tenés acceso" aunque se escriba la URL. Reglas en `apps/web/src/lib/demo-store/permissions.ts`.
 - **Mis sobres:** cada persona ve solo sus sobres (con estado de entrega), sus horas y adelantos.
@@ -128,7 +129,7 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 - Quién aparece como autor de una acción es "Encargado" o la persona simulada con "Ver como…".
 - Los datos demo usan los **nombres reales** de la planilla (`apps/web/src/lib/demo/data.ts`): anonimizar si el repositorio es público.
 
-**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 51, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo) y reglas. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
+**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 62, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo), reglas, registro de adelantos (alta, anulación, conversión de datos viejos) y anular / reabrir una semana cerrada. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
 
 ## 7. Qué falta de la Fase 0
 
@@ -195,7 +196,7 @@ pnpm --filter @propinas/web build
 | P3 | Puntos y factores | Horas × factor del puesto (hasta 4 decimales), factores redondeados de la planilla. | ¿Factor por puesto o por persona? ¿Valor exacto (p. ej. 0,65 ÷ 45)? |
 | P4 | Redondeo | Al centavo, mayor resto. | ¿Pesos enteros? (con mayor resto en pesos se reproduce exacta la planilla). |
 | P5 | Recepción y Cocina | No se usan (en 0 en la planilla). | ¿Fuentes del mismo pozo o pozos aparte? |
-| P6 | Adelantos en el tiempo | Se descuentan del sobre de la semana; el saldo pasa a la siguiente. | ¿De toda la semana o solo desde su fecha? ¿Registro uno por uno con fecha? |
+| P6 | Adelantos en el tiempo | Cada adelanto se registra con su fecha, pero se descuentan todos del sobre de la semana sin mirar la fecha; el saldo pasa a la siguiente. | ¿De toda la semana o solo desde su fecha? ¿Puede elegirse descontar un adelanto en una semana posterior? |
 | P7 | Tests del Excel | 3 `todo` en el motor. | Se completan con P1–P4 resueltos (y el `.xlsx`, no solo la foto). |
 | P8 | Quién prepara y entrega sobres | Solo el Encargado (revertir: decidido, A3). | ¿El Editor también puede? |
 | — | Verificación de email obligatoria | Propuesta: el usuario no accede a la app hasta verificar el correo (con opción de reenviar). Confirmar. |
@@ -220,9 +221,9 @@ Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**)
 
 **Cuando retomemos: la Fase 0 está cerrada (Neon migrado sin drift, CI en verde). La Fase 1 avanza como demo en el navegador; la persistencia real espera la aprobación del plan de §11 y las decisiones P1–P6.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 51 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
+1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 62 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
 2. **Decisiones de negocio:** P1–P6 y P8 (§10), A1. Se pueden revisar en la pantalla "Reglas de cálculo".
-3. **Demo — próximos pasos propuestos (requieren confirmación porque cambian la estructura de la demo):** adelantos como movimientos individuales con fecha (P6) y anular / rehacer una semana cerrada (regla ya aprobada en DATABASE.md, solo si ningún sobre está entregado).
-4. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon.
+3. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
+4. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
 
 No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.

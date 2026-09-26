@@ -6,7 +6,6 @@ import {
   monthlySummary,
   openWeek,
   seedVenue,
-  setAdvance,
   setDailyTip,
   setHours,
   setStaffActive,
@@ -16,8 +15,21 @@ import {
   type Venue,
   type Outcome,
 } from './model';
+import { addAdvance } from './advances';
 
 const CLOSED_AT = '2026-09-26T12:00:00.000Z';
+
+/** Carga un adelanto (movimiento) el primer día de la semana de prueba. */
+const adv = (venue: Venue, weekId: string, staffId: string, amount: string, date = '2026-09-21') =>
+  addAdvance(venue, weekId, {
+    id: `a-${weekId}-${staffId}-${amount}`,
+    staffId,
+    date,
+    amount,
+    note: '',
+    by: 'Encargado',
+    at: CLOSED_AT,
+  });
 
 function ok(outcome: Outcome): Venue {
   if (!outcome.ok) throw new Error(outcome.error);
@@ -53,7 +65,7 @@ describe('semana', () => {
   const seeded = seedVenue(CLOSED_AT);
 
   it('suma los pozos diarios y reparte una vez al cerrar', () => {
-    let venue = ok(startWeek(seeded, '2026-09-21', 'w1'));
+    let venue = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
     venue = ok(setDailyTip(venue, 'w1', '2026-09-21', '40.000'));
     venue = ok(setDailyTip(venue, 'w1', '2026-09-22', '60.000'));
     const week = openWeek(venue);
@@ -62,7 +74,7 @@ describe('semana', () => {
     // Dos personas del mismo puesto (factor 0,022), 30 h y 10 h → 75 % / 25 % de $100.000
     venue = ok(setHours(venue, 'w1', 'roro', '30'));
     venue = ok(setHours(venue, 'w1', 'marcos', '10'));
-    venue = ok(setAdvance(venue, 'w1', 'marcos', '5.000'));
+    venue = ok(adv(venue, 'w1', 'marcos', '5.000'));
     venue = ok(closeWeek(venue, 'w1', CLOSED_AT));
 
     const closed = venue.weeks.find((w) => w.id === 'w1');
@@ -74,7 +86,7 @@ describe('semana', () => {
   });
 
   it('una semana cerrada no se modifica', () => {
-    const venue = ok(startWeek(seeded, '2026-09-21', 'w1'));
+    const venue = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
     const withTip = ok(setDailyTip(venue, 'w1', '2026-09-21', '1.000'));
     const withHours = ok(setHours(withTip, 'w1', 'roro', '8'));
     const closed = ok(closeWeek(withHours, 'w1', CLOSED_AT));
@@ -84,7 +96,7 @@ describe('semana', () => {
   });
 
   it('no cierra sin pozo ni sin horas', () => {
-    const venue = ok(startWeek(seeded, '2026-09-21', 'w1'));
+    const venue = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
     expect(err(closeWeek(venue, 'w1', CLOSED_AT))).toMatch(/pozo/);
     const withTip = ok(setDailyTip(venue, 'w1', '2026-09-21', '1.000'));
     expect(err(closeWeek(withTip, 'w1', CLOSED_AT))).toMatch(/puntos/);
@@ -92,23 +104,23 @@ describe('semana', () => {
 
   it('sugiere el lunes actual, o el día siguiente a la última semana si ya está ocupado', () => {
     expect(suggestedStartDate(seeded, '2026-09-26')).toBe('2026-09-21');
-    const closed = ok(startWeek(seeded, '2026-09-21', 'w1'));
+    const closed = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
     expect(suggestedStartDate(closed, '2026-09-26')).toBe('2026-09-28');
   });
 
   it('solo una semana abierta y sin superponer fechas', () => {
-    const venue = ok(startWeek(seeded, '2026-09-21', 'w1'));
-    expect(err(startWeek(venue, '2026-09-28', 'w2'))).toMatch(/abierta/);
-    expect(err(startWeek(seeded, '2024-11-20', 'w2'))).toMatch(/superponen/);
+    const venue = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
+    expect(err(startWeek(venue, '2026-09-28', 'w2', CLOSED_AT))).toMatch(/abierta/);
+    expect(err(startWeek(seeded, '2024-11-20', 'w2', CLOSED_AT))).toMatch(/superponen/);
     expect(err(setDailyTip(venue, 'w1', '2026-09-28', '1'))).toMatch(/no es de esta semana/);
   });
 
   it('el adelanto que no alcanza pasa como saldo a la semana siguiente', () => {
-    let venue = ok(startWeek(seeded, '2026-09-21', 'w1'));
+    let venue = ok(startWeek(seeded, '2026-09-21', 'w1', CLOSED_AT));
     venue = ok(setDailyTip(venue, 'w1', '2026-09-21', '10.000'));
     venue = ok(setHours(venue, 'w1', 'roro', '8'));
     venue = ok(setHours(venue, 'w1', 'marcos', '8'));
-    venue = ok(setAdvance(venue, 'w1', 'marcos', '8.000')); // le tocan $5.000
+    venue = ok(adv(venue, 'w1', 'marcos', '8.000')); // le tocan $5.000
     venue = ok(closeWeek(venue, 'w1', CLOSED_AT));
     const marcos = venue.weeks
       .find((w) => w.id === 'w1')
@@ -119,16 +131,22 @@ describe('semana', () => {
       finalCents: '0',
     });
 
-    venue = ok(startWeek(venue, '2026-09-28', 'w2'));
+    venue = ok(startWeek(venue, '2026-09-28', 'w2', CLOSED_AT));
     const next = openWeek(venue);
-    expect(next?.carried).toEqual({ marcos: '300000' });
-    expect(next?.advances).toEqual({ marcos: '3.000,00' });
+    expect(next?.advanceEntries).toEqual([
+      expect.objectContaining({
+        staffId: 'marcos',
+        amountCents: '300000',
+        origin: 'SALDO_ANTERIOR',
+        fromWeekId: 'w1',
+      }),
+    ]);
   });
 });
 
 describe('resumen mensual', () => {
   it('suma la propina generada por mes según la fecha de cada día', () => {
-    let venue = ok(startWeek(seedVenue(CLOSED_AT), '2026-09-28', 'w1'));
+    let venue = ok(startWeek(seedVenue(CLOSED_AT), '2026-09-28', 'w1', CLOSED_AT));
     venue = ok(setDailyTip(venue, 'w1', '2026-09-30', '10.000'));
     venue = ok(setDailyTip(venue, 'w1', '2026-10-01', '25.000'));
     const summary = monthlySummary(venue);
@@ -167,7 +185,7 @@ describe('personal y puestos', () => {
 
   it('quien está de baja no entra en el reparto pero sigue en las semanas cerradas', () => {
     let venue = ok(setStaffActive(seeded, 'leo', false));
-    venue = ok(startWeek(venue, '2026-09-21', 'w1'));
+    venue = ok(startWeek(venue, '2026-09-21', 'w1', CLOSED_AT));
     venue = ok(setDailyTip(venue, 'w1', '2026-09-21', '1.000'));
     venue = ok(setHours(venue, 'w1', 'leo', '8'));
     venue = ok(setHours(venue, 'w1', 'roro', '8'));

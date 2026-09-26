@@ -6,7 +6,7 @@
  * Flujo acordado (2026-09-26): el encargado anota el pozo de cada día; al cerrar la semana se
  * suman los pozos y se hace UN reparto con las horas totales de la semana (fórmula provisional).
  */
-import { addDays, isIsoDate, mondayOf, weekDays } from '@/lib/dates';
+import { addDays, formatWeekRange, isIsoDate, mondayOf, weekDays } from '@/lib/dates';
 import { formatScaled, parseDecimal, parseMoney } from '@/lib/decimal';
 import { calculateFromRows, type DistributionFormRow } from '@/lib/distribution/form';
 import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
@@ -53,6 +53,37 @@ export interface WeekResult {
   rows: ClosedRow[];
 }
 
+/**
+ * Un adelanto registrado (ver advances.ts). Nunca se borra: se anula con motivo.
+ * `SALDO_ANTERIOR` es lo que no alcanzó a descontarse la semana previa.
+ */
+export interface AdvanceEntry {
+  id: string;
+  staffId: string;
+  /** Fecha del adelanto, dentro de la semana. */
+  date: string;
+  amountCents: string;
+  note: string;
+  origin: 'MANUAL' | 'SALDO_ANTERIOR';
+  /** Para `SALDO_ANTERIOR`: la semana de donde viene. */
+  fromWeekId?: string;
+  createdBy: string;
+  createdAt: string;
+  voidedAt?: string;
+  voidedBy?: string;
+  voidReason?: string;
+}
+
+/** Un cierre anulado de la semana: se conserva completo para la auditoría. */
+export interface VoidedRevision {
+  revision: number;
+  result: WeekResult;
+  envelopes?: Record<string, Envelope>;
+  voidedAt: string;
+  voidedBy: string;
+  voidReason: string;
+}
+
 export interface Week {
   id: string;
   startDate: string;
@@ -60,13 +91,14 @@ export interface Week {
   /** Pozo de cada día, tal como lo escribió el encargado ("45.500"). */
   tips: Record<string, string>;
   hours: Record<string, string>;
-  advances: Record<string, string>;
-  /** Saldo de adelantos que viene de la semana anterior (centavos), ya sumado en `advances`. */
-  carried: Record<string, string>;
+  advanceEntries: AdvanceEntry[];
   note?: string;
   result?: WeekResult;
   /** Estado de cada sobre (por staffId), después del cierre. Ver envelopes.ts. */
   envelopes?: Record<string, Envelope>;
+  /** 1 la primera vez; sube cada vez que se anula el cierre y se vuelve a cerrar. */
+  revision?: number;
+  voidedRevisions?: VoidedRevision[];
 }
 
 /** Un local (p. ej. "Faena Library"): su propio personal, puestos, semanas e historial. */
@@ -152,9 +184,26 @@ export function weekFormRows(venue: Venue, week: Week): DistributionFormRow[] {
       name: member.name,
       hours: week.hours[member.id] ?? '',
       factor: positionById(venue, member.positionId)?.factor ?? '',
-      advance: week.advances[member.id] ?? '',
+      advance: formatAdvance(advanceTotal(week, member.id)),
     }));
 }
+
+/** Adelantos vigentes (no anulados) de la semana. */
+export function activeAdvances(week: Week): AdvanceEntry[] {
+  return week.advanceEntries.filter((entry) => !entry.voidedAt);
+}
+
+/**
+ * Total de adelantos vigentes de una persona en la semana. PROVISIONAL (P6): se descuentan todos
+ * del sobre de la semana, sin importar la fecha de cada uno.
+ */
+export function advanceTotal(week: Week, staffId: string): bigint {
+  return activeAdvances(week)
+    .filter((entry) => entry.staffId === staffId)
+    .reduce((sum, entry) => sum + BigInt(entry.amountCents), 0n);
+}
+
+const formatAdvance = (cents: bigint) => (cents > 0n ? formatScaled(cents, 2, 2) : '');
 
 export function calculateWeek(venue: Venue, week: Week) {
   const total = weekTotal(week);
@@ -223,7 +272,7 @@ export function suggestedStartDate(venue: Venue, today: string): string {
   return addDays(latestEnd, 1);
 }
 
-export function startWeek(venue: Venue, startDate: string, id: string): Outcome {
+export function startWeek(venue: Venue, startDate: string, id: string, at: string): Outcome {
   if (!isIsoDate(startDate)) return fail('Elegí la fecha de inicio de la semana.');
   if (openWeek(venue)) return fail('Ya hay una semana abierta: cerrala antes de empezar otra.');
   const endDate = addDays(startDate, 6);
@@ -232,23 +281,39 @@ export function startWeek(venue: Venue, startDate: string, id: string): Outcome 
   );
   if (overlap) return fail('Esas fechas se superponen con una semana ya registrada.');
 
-  // Saldo de adelantos de la última semana cerrada.
+  // Saldo de adelantos de la última semana cerrada: entra como un movimiento más.
   const lastClosed = sortedWeeks(venue).find((week) => week.status === 'CERRADA' && week.result);
-  const carried: Record<string, string> = {};
-  const advances: Record<string, string> = {};
+  const advanceEntries: AdvanceEntry[] = [];
   for (const row of lastClosed?.result?.rows ?? []) {
     const pending = BigInt(row.pendingAdvanceCents);
-    if (pending > 0n) {
-      carried[row.staffId] = pending.toString();
-      advances[row.staffId] = formatScaled(pending, 2, 2);
+    if (pending > 0n && lastClosed) {
+      advanceEntries.push({
+        id: `${id}-saldo-${row.staffId}`,
+        staffId: row.staffId,
+        date: startDate,
+        amountCents: pending.toString(),
+        note: `Saldo de la ${formatWeekRange(lastClosed.startDate).toLowerCase()}`,
+        origin: 'SALDO_ANTERIOR',
+        fromWeekId: lastClosed.id,
+        createdBy: 'GUTIP',
+        createdAt: at,
+      });
     }
   }
 
-  const week: Week = { id, startDate, status: 'ABIERTA', tips: {}, hours: {}, advances, carried };
+  const week: Week = {
+    id,
+    startDate,
+    status: 'ABIERTA',
+    tips: {},
+    hours: {},
+    advanceEntries,
+    revision: 1,
+  };
   return { ok: true, venue: { ...venue, weeks: [...venue.weeks, week] } };
 }
 
-type WeekField = 'tips' | 'hours' | 'advances';
+type WeekField = 'tips' | 'hours';
 
 function editOpenWeek(
   venue: Venue,
@@ -276,10 +341,6 @@ export function setDailyTip(venue: Venue, weekId: string, date: string, value: s
 
 export function setHours(venue: Venue, weekId: string, staffId: string, value: string): Outcome {
   return editOpenWeek(venue, weekId, 'hours', staffId, value);
-}
-
-export function setAdvance(venue: Venue, weekId: string, staffId: string, value: string): Outcome {
-  return editOpenWeek(venue, weekId, 'advances', staffId, value);
 }
 
 /** Cierra la semana: reparte el pozo total y congela el resultado (sobres). */
@@ -319,6 +380,8 @@ export function closeWeek(venue: Venue, weekId: string, closedAt: string): Outco
   const closed: Week = {
     ...week,
     status: 'CERRADA',
+    // Sobres nuevos en cada cierre (también al volver a cerrar tras una anulación).
+    envelopes: undefined,
     result: {
       closedAt,
       totalCents: result.totalCents.toString(),
@@ -427,10 +490,17 @@ export function seedVenue(closedAt: string): Venue {
         status: 'ABIERTA',
         tips: { [SEED_WEEK.tipDate]: SEED_WEEK.total },
         hours: Object.fromEntries(SEED_STAFF.map((s) => [s.id, s.weekHours])),
-        advances: Object.fromEntries(
-          SEED_STAFF.filter((s) => s.advance).map((s) => [s.id, s.advance]),
-        ),
-        carried: {},
+        advanceEntries: SEED_STAFF.filter((s) => s.advance).map((s): AdvanceEntry => ({
+          id: `semana-planilla-adelanto-${s.id}`,
+          staffId: s.id,
+          date: SEED_WEEK.tipDate,
+          amountCents: (parseMoney(s.advance) ?? 0n).toString(),
+          note: 'Adelanto de la planilla',
+          origin: 'MANUAL',
+          createdBy: 'Encargado',
+          createdAt: closedAt,
+        })),
+        revision: 1,
         note: SEED_WEEK.note,
       },
     ],
@@ -466,5 +536,56 @@ export function normalizeVenue(value: unknown): Venue | null {
     Array.isArray(v.staff) &&
     Array.isArray(v.weeks);
   if (!valid) return null;
-  return { ...(v as Venue), members: Array.isArray(v.members) ? v.members : [] };
+  return {
+    ...(v as Venue),
+    weeks: (v.weeks as unknown[]).map(normalizeWeek),
+    members: Array.isArray(v.members) ? v.members : [],
+  };
+}
+
+/**
+ * Semanas guardadas antes del registro de adelantos tenían un monto por persona (`advances`) y
+ * el saldo arrastrado (`carried`). Se convierten en movimientos, sin cambiar los importes.
+ */
+function normalizeWeek(raw: unknown): Week {
+  const week = raw as Week & {
+    advances?: Record<string, string>;
+    carried?: Record<string, string>;
+  };
+  if (Array.isArray(week.advanceEntries)) return week;
+
+  const { advances = {}, carried = {}, ...rest } = week;
+  // Mediodía UTC: en Argentina sigue siendo el mismo día (medianoche UTC se vería como el día anterior).
+  const at = week.result?.closedAt ?? `${week.startDate}T12:00:00.000Z`;
+  const advanceEntries: AdvanceEntry[] = [];
+  for (const [staffId, text] of Object.entries(advances)) {
+    const total = parseMoney(text) ?? 0n;
+    const carriedCents = BigInt(carried[staffId] ?? '0');
+    const manual = total - carriedCents;
+    if (carriedCents > 0n) {
+      advanceEntries.push({
+        id: `${week.id}-saldo-${staffId}`,
+        staffId,
+        date: week.startDate,
+        amountCents: carriedCents.toString(),
+        note: 'Saldo de la semana anterior',
+        origin: 'SALDO_ANTERIOR',
+        createdBy: 'GUTIP',
+        createdAt: at,
+      });
+    }
+    if (manual > 0n) {
+      advanceEntries.push({
+        id: `${week.id}-adelanto-${staffId}`,
+        staffId,
+        date: week.startDate,
+        amountCents: manual.toString(),
+        note: 'Cargado antes del registro de adelantos',
+        origin: 'MANUAL',
+        createdBy: 'Encargado',
+        createdAt: at,
+      });
+    }
+  }
+  return { ...rest, advanceEntries, revision: week.revision ?? 1 };
 }

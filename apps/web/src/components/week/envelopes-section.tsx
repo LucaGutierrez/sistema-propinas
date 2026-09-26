@@ -49,6 +49,7 @@ const EVENT_LABEL: Record<EnvelopeEventType, string> = {
   PREPARACION_DESHECHA: 'Preparación deshecha',
   ENTREGADO: 'Entregado',
   ENTREGA_REVERTIDA: 'Entrega revertida',
+  ANULADO: 'Semana anulada',
 };
 
 export function EnvelopeStatusBadge({ status }: { status: EnvelopeStatus }) {

@@ -3,6 +3,7 @@
 import { ArrowRightIcon, CalendarRangeIcon } from 'lucide-react';
 import Link from 'next/link';
 import { WeekStatusBadge } from '@/components/gutip/badges';
+import { Badge } from '@/components/ui/badge';
 import { LoadingState } from '@/components/gutip/loading';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -94,6 +95,11 @@ export function History() {
                           : ' · en curso'}
                       </p>
                     </div>
+                    {(week.revision ?? 1) > 1 ? (
+                      <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-800">
+                        Rev. {week.revision}
+                      </Badge>
+                    ) : null}
                     <WeekStatusBadge status={week.status} />
                     <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </Link>
