@@ -83,14 +83,14 @@ export function computeProvisionalDistribution(
     if (ids.has(row.id)) throw new ProvisionalFormulaError(`Empleado repetido: ${row.id}`);
     ids.add(row.id);
     if (row.hoursE2 < 0n || row.factorE4 < 0n || row.advanceCents < 0n) {
-      throw new ProvisionalFormulaError('Horas, factor y adelanto no pueden ser negativos.');
+      throw new ProvisionalFormulaError('Horas, porción y adelanto no pueden ser negativos.');
     }
   }
 
   const points = rows.map((row) => row.hoursE2 * row.factorE4);
   const totalPointsE6 = points.reduce((sum, p) => sum + p, 0n);
   if (totalPointsE6 === 0n) {
-    throw new ProvisionalFormulaError('Nadie tiene puntos: cargá horas y factor.');
+    throw new ProvisionalFormulaError('Nadie tiene puntos: cargá horas y porción.');
   }
 
   // Mayor resto en la unidad configurada; empates: más puntos, luego el orden de la tabla.

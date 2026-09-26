@@ -181,19 +181,19 @@ export const PARAMS: readonly ParamDefinition[] = [
       {
         value: 'POR_PUESTO',
         label: 'Por puesto',
-        description: 'Cada puesto tiene un factor.',
+        description: 'Cada puesto tiene una porción.',
         supported: true,
       },
       {
         value: 'PUESTO_CON_EXCEPCIONES',
         label: 'Por puesto, con excepciones',
-        description: 'Factor del puesto, con un valor propio para algunas personas.',
+        description: 'Porción del puesto, con un valor propio para algunas personas.',
         supported: false,
       },
       {
         value: 'POR_PERSONA',
         label: 'Por persona',
-        description: 'Cada persona tiene su factor.',
+        description: 'Cada persona tiene su porción.',
         supported: false,
       },
     ],

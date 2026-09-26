@@ -329,7 +329,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="pl-5">Empleado</TableHead>
                   <TableHead>Puesto</TableHead>
-                  <TableHead className="text-right">Factor</TableHead>
+                  <TableHead className="text-right">Porción</TableHead>
                   <TableHead className="text-right">Horas</TableHead>
                   <TableHead className="pr-5 text-right">Adelanto $</TableHead>
                 </TableRow>

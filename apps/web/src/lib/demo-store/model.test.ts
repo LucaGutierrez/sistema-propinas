@@ -165,7 +165,7 @@ describe('resumen mensual', () => {
 describe('personal y puestos', () => {
   const seeded = seedVenue(CLOSED_AT);
 
-  it('agrega un puesto con su factor y una persona en ese puesto', () => {
+  it('agrega un puesto con su porción y una persona en ese puesto', () => {
     let venue = ok(
       addPosition(
         seeded,

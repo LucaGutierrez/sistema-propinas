@@ -55,7 +55,7 @@ export function calculateFromRows(
     const factorE4 = parseDecimal(row.factor, FACTOR_SCALE);
     const advanceCents = row.advance.trim() === '' ? 0n : parseMoney(row.advance);
     if (hoursE2 === null) errors.push(`${row.name}: horas inválidas (hasta 2 decimales).`);
-    if (factorE4 === null) errors.push(`${row.name}: factor inválido (hasta 4 decimales).`);
+    if (factorE4 === null) errors.push(`${row.name}: porción inválida (hasta 4 decimales).`);
     if (advanceCents === null) errors.push(`${row.name}: adelanto inválido.`);
     return {
       id: row.id,

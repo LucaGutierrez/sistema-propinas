@@ -118,7 +118,7 @@ function StaffRow({ venue, member }: { venue: Venue; member: Staff }) {
         <p className={cn('truncate font-medium', !member.active && 'text-muted-foreground')}>
           {member.name}
         </p>
-        <p className="text-xs text-muted-foreground">factor {position?.factor ?? '—'}</p>
+        <p className="text-xs text-muted-foreground">porción {position?.factor ?? '—'}</p>
       </div>
       {editing ? (
         <select
@@ -236,7 +236,7 @@ function AddStaffForm({ venue }: { venue: Venue }) {
             >
               {positionsOf(venue).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} (factor {p.factor})
+                  {p.name} (porción {p.factor})
                 </option>
               ))}
             </select>

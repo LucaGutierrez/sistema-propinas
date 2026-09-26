@@ -101,7 +101,7 @@ export function DistributionTable({
               <TableHead className="pl-5">Empleado</TableHead>
               <TableHead>Puesto</TableHead>
               <TableHead className="text-right">Horas semana</TableHead>
-              <TableHead className="text-right">Factor</TableHead>
+              <TableHead className="text-right">Porción</TableHead>
               <TableHead className="text-right">Puntos</TableHead>
               <TableHead className="text-right">%</TableHead>
               <TableHead className="text-right">Importe</TableHead>

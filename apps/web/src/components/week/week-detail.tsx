@@ -157,7 +157,7 @@ export function WeekDetail({ weekId }: { weekId: string }) {
             <CardHeader className="pb-4">
               <CardTitle>Detalle del reparto</CardTitle>
               <CardDescription>
-                Horas, factores y puntos tal como quedaron al cerrar.
+                Horas, porciones y puntos tal como quedaron al cerrar.
               </CardDescription>
             </CardHeader>
             <DistributionTable rows={rows} totals={closedTotalsView(result)} />
