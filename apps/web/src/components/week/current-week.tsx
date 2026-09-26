@@ -43,7 +43,7 @@ import {
   calculateWeek,
   closeWeek,
   openWeek,
-  positionById,
+  weekPolicy,
   activeAdvances,
   advanceTotal,
   setDailyTip,
@@ -56,9 +56,11 @@ import {
   type Week,
 } from '@/lib/demo-store/model';
 import { newId, useDemoStore } from '@/lib/demo-store/store';
+import { policyGaps } from '@/lib/demo-store/policy';
 import { previewRowsView } from '@/lib/demo-store/views';
 import { AdvancesCard } from './advances-card';
 import { RevisionNotice } from './revision-notice';
+import { WeekPolicyNotice } from './week-policy-notice';
 import type { ProvisionalResult } from '@/lib/distribution/provisional-formula';
 import { cn } from '@/lib/utils';
 
@@ -166,9 +168,12 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
   const today = todayIso();
   const total = weekTotal(week);
   const activeStaff = venue.staff.filter((member) => member.active);
+  // Versión de la política fijada a esta semana: define puestos, pesos y redondeo del cálculo.
+  const policy = weekPolicy(venue, week);
+  const gaps = policyGaps(policy);
   const inputsKey = useMemo(
-    () => JSON.stringify({ week, staff: venue.staff, positions: venue.positions }),
-    [week, venue.staff, venue.positions],
+    () => JSON.stringify({ week, staff: venue.staff, policy: policy.number }),
+    [week, venue.staff, policy.number],
   );
   const stale = calculation !== null && calculation.key !== inputsKey;
   const result = stale ? null : (calculation?.result ?? null);
@@ -251,6 +256,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
 
       {week.note ? <p className="mt-4 text-sm text-muted-foreground">{week.note}</p> : null}
       <RevisionNotice week={week} />
+      <WeekPolicyNotice venue={venue} week={week} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5">
         {/* Pozo diario */}
@@ -342,7 +348,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                   </TableRow>
                 ) : null}
                 {activeStaff.map((member) => {
-                  const position = positionById(venue, member.positionId);
+                  const position = policy.positions.find((p) => p.id === member.positionId);
                   const advance = advanceTotal(week, member.id);
                   const carried = activeAdvances(week)
                     .filter((e) => e.staffId === member.id && e.origin === 'SALDO_ANTERIOR')
@@ -353,7 +359,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                       <TableCell>
                         <PositionBadge
                           name={position?.name ?? ''}
-                          tone={toneOf(venue.positions, member.positionId)}
+                          tone={toneOf(policy.positions, member.positionId)}
                         />
                       </TableCell>
                       <TableCell className="tabular text-right text-muted-foreground">
@@ -412,11 +418,13 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                 ? `¿Cerrar la semana y repartir ${formatMoney(total.totalCents)}? Después no se podrá modificar.`
                 : stale
                   ? 'Cambiaste datos: volvé a calcular antes de cerrar.'
-                  : !perms.closeWeek
-                    ? 'Cargá los datos. El encargado es quien cierra la semana.'
-                    : result
-                      ? 'Revisá los sobres y cerrá la semana.'
-                      : 'Cuando esté todo cargado, presioná Calcular.'}
+                  : gaps.length > 0
+                    ? 'La política tiene puntos por definir: no se puede cerrar todavía.'
+                    : !perms.closeWeek
+                      ? 'Cargá los datos. El encargado es quien cierra la semana.'
+                      : result
+                        ? 'Revisá los sobres y cerrá la semana.'
+                        : 'Cuando esté todo cargado, presioná Calcular.'}
           </p>
           <div className="flex gap-2">
             {confirming ? (
@@ -448,7 +456,7 @@ function OpenWeek({ venue, week }: { venue: Venue; week: Week }) {
                     variant={result ? 'default' : 'outline'}
                     className="flex-1 sm:flex-none"
                     onClick={() => setConfirming(true)}
-                    disabled={!result}
+                    disabled={!result || gaps.length > 0}
                   >
                     <LockIcon />
                     Cerrar semana

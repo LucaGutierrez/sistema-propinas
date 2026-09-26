@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addPosition,
   addStaff,
   closeWeek,
   monthlySummary,
@@ -15,6 +14,7 @@ import {
   type Venue,
   type Outcome,
 } from './model';
+import { addPosition } from './policy-ops';
 import { addAdvance } from './advances';
 
 const CLOSED_AT = '2026-09-26T12:00:00.000Z';
@@ -166,7 +166,14 @@ describe('personal y puestos', () => {
   const seeded = seedVenue(CLOSED_AT);
 
   it('agrega un puesto con su factor y una persona en ese puesto', () => {
-    let venue = ok(addPosition(seeded, { id: 'cocina', name: 'Cocina', factor: '0,015' }));
+    let venue = ok(
+      addPosition(
+        seeded,
+        { id: 'cocina', name: 'Cocina', factor: '0,015' },
+        'Encargado',
+        CLOSED_AT,
+      ),
+    );
     venue = ok(addStaff(venue, { id: 'p1', name: 'Nuevo', positionId: 'cocina' }));
     expect(venue.staff.find((s) => s.id === 'p1')).toMatchObject({
       active: true,
@@ -175,10 +182,12 @@ describe('personal y puestos', () => {
   });
 
   it('valida nombres y factores', () => {
-    expect(err(addPosition(seeded, { id: 'x', name: 'barra', factor: '0,02' }))).toMatch(
-      /Ya existe/,
-    );
-    expect(err(addPosition(seeded, { id: 'x', name: 'Runner', factor: 'abc' }))).toMatch(/factor/);
+    expect(
+      err(addPosition(seeded, { id: 'x', name: 'barra', factor: '0,02' }, 'E', CLOSED_AT)),
+    ).toMatch(/Ya existe/);
+    expect(
+      err(addPosition(seeded, { id: 'x', name: 'Runner', factor: 'abc' }, 'E', CLOSED_AT)),
+    ).toMatch(/porción/);
     expect(err(addStaff(seeded, { id: 'x', name: 'Leo', positionId: 'salon' }))).toMatch(/Ya hay/);
     expect(err(addStaff(seeded, { id: 'x', name: 'Ana', positionId: 'nada' }))).toMatch(/puesto/);
   });

@@ -3,6 +3,7 @@
  * cada uno con su propio personal, puestos, semanas e historial. Nada se comparte entre locales.
  */
 import { emptyVenue, normalizeVenue, seedVenue, type Outcome, type Venue } from './model';
+import { copiedPolicy, currentVersion, standardPolicy } from './policy';
 
 export const WORKSPACE_VERSION = 2;
 
@@ -61,21 +62,25 @@ function nameTaken(workspace: Workspace, name: string, exceptId?: string): boole
 }
 
 /**
- * Crea un local y lo deja activo. Opcionalmente copia los puestos (con sus factores) de otro
- * local; el personal no se copia.
+ * Crea un local y lo deja activo. Empieza con la configuración estándar de GUTIP (válida: puede
+ * calcular y cerrar enseguida) o con una copia independiente de la política de otro local.
+ * El personal nunca se copia.
  */
 export function createVenue(
   workspace: Workspace,
-  params: { id: string; name: string; copyPositionsFrom?: string | null },
+  params: { id: string; name: string; copyPolicyFrom?: string | null; by: string; at: string },
 ): WorkspaceOutcome {
   const name = params.name.trim();
   if (name === '') return fail('Poné un nombre para el local.');
   if (nameTaken(workspace, name)) return fail(`Ya existe un local llamado "${name}".`);
-  const source = params.copyPositionsFrom
-    ? workspace.venues.find((v) => v.id === params.copyPositionsFrom)
+  const source = params.copyPolicyFrom
+    ? workspace.venues.find((v) => v.id === params.copyPolicyFrom)
     : undefined;
-  if (params.copyPositionsFrom && !source) return fail('El local a copiar no existe.');
-  const venue = emptyVenue(params.id, name, source?.positions ?? []);
+  if (params.copyPolicyFrom && !source) return fail('El local a copiar no existe.');
+  const policy = source
+    ? copiedPolicy(currentVersion(source.policy), source.name, params.by, params.at)
+    : standardPolicy(params.at);
+  const venue = emptyVenue(params.id, name, policy);
   return {
     ok: true,
     workspace: {
@@ -142,6 +147,7 @@ export function parseStoredWorkspace(value: unknown): Workspace | null {
       id: 'local-demo',
       name: typeof v.restaurantName === 'string' ? v.restaurantName : 'Mi local',
       positions: v.positions,
+      config: v.config,
       staff: v.staff,
       weeks: v.weeks,
     });

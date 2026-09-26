@@ -27,10 +27,10 @@ export function FormulaCard({ className }: { className?: string }) {
             Todavía estamos validando la fórmula exacta de la planilla histórica. Los importes son
             orientativos.{' '}
             <Link
-              href="/reglas"
+              href="/configuracion"
               className="font-medium text-foreground underline underline-offset-2"
             >
-              Ver qué falta decidir
+              Ver la configuración de este local
             </Link>
           </p>
           <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">

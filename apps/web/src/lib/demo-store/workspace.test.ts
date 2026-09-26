@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { addPosition, addStaff, seedVenue } from './model';
+import { addStaff, positionsOf, seedVenue } from './model';
+import { addPosition } from './policy-ops';
 import {
   activeVenue,
   applyToActiveVenue,
@@ -24,13 +25,26 @@ function err(outcome: WorkspaceOutcome): string {
   return outcome.error;
 }
 
-/** Faena Library (copia de puestos del local demo) y Faena Mercado (sin puestos). */
+/** Faena Library (copia de la política del local demo) y Faena Mercado (configuración estándar). */
 function twoVenues(): Workspace {
   let ws = seedWorkspace(CLOSED_AT);
   ws = ok(
-    createVenue(ws, { id: 'library', name: 'Faena Library', copyPositionsFrom: 'local-demo' }),
+    createVenue(ws, {
+      id: 'library',
+      name: 'Faena Library',
+      copyPolicyFrom: 'local-demo',
+      by: 'Encargado',
+      at: '2026-09-26T12:00:00.000Z',
+    }),
   );
-  ws = ok(createVenue(ws, { id: 'mercado', name: 'Faena Mercado' }));
+  ws = ok(
+    createVenue(ws, {
+      id: 'mercado',
+      name: 'Faena Mercado',
+      by: 'Encargado',
+      at: '2026-09-26T12:00:00.000Z',
+    }),
+  );
   return ws;
 }
 
@@ -46,13 +60,22 @@ describe('locales', () => {
     const library = ws.venues.find((v) => v.id === 'library');
     expect(library?.staff).toEqual([]);
     expect(library?.weeks).toEqual([]);
-    expect(library?.positions.map((p) => p.name)).toEqual([
+    expect((library ? positionsOf(library) : []).map((p) => p.name)).toEqual([
       'Supervisor',
       'Barra',
       'Salón',
       'Bacha',
     ]);
-    expect(ws.venues.find((v) => v.id === 'mercado')?.positions).toEqual([]);
+    // Un local nuevo arranca con la configuración estándar, que ya trae puestos y pesos.
+    const mercado = ws.venues.find((v) => v.id === 'mercado');
+    expect(mercado?.policy.versions[0]?.origin).toBe('ESTANDAR');
+    expect((mercado ? positionsOf(mercado) : []).map((p) => p.name)).toEqual([
+      'Supervisor',
+      'Barra',
+      'Salón',
+      'Bacha',
+    ]);
+    expect(library?.policy.versions[0]?.origin).toBe('COPIA');
   });
 
   it('el personal de un local no aparece en otro', () => {
@@ -71,17 +94,34 @@ describe('locales', () => {
     ws = ok(setActiveVenue(ws, 'library'));
     ws = ok(
       applyToActiveVenue(ws, (v) =>
-        addPosition(v, { id: 'cocina', name: 'Cocina', factor: '0,015' }),
+        addPosition(v, { id: 'cocina', name: 'Cocina', factor: '0,015' }, 'Encargado', CLOSED_AT),
       ),
     );
-    expect(ws.venues.find((v) => v.id === 'library')?.positions).toHaveLength(5);
-    expect(ws.venues.find((v) => v.id === 'local-demo')?.positions).toHaveLength(4);
+    const positionsIn = (id: string) => {
+      const venue = ws.venues.find((v) => v.id === id);
+      return venue ? positionsOf(venue) : [];
+    };
+    expect(positionsIn('library')).toHaveLength(5);
+    expect(positionsIn('local-demo')).toHaveLength(4);
   });
 
   it('valida nombres de local', () => {
     const ws = twoVenues();
-    expect(err(createVenue(ws, { id: 'x', name: '  ' }))).toMatch(/nombre/);
-    expect(err(createVenue(ws, { id: 'x', name: 'faena library' }))).toMatch(/Ya existe/);
+    expect(
+      err(
+        createVenue(ws, { id: 'x', name: '  ', by: 'Encargado', at: '2026-09-26T12:00:00.000Z' }),
+      ),
+    ).toMatch(/nombre/);
+    expect(
+      err(
+        createVenue(ws, {
+          id: 'x',
+          name: 'faena library',
+          by: 'Encargado',
+          at: '2026-09-26T12:00:00.000Z',
+        }),
+      ),
+    ).toMatch(/Ya existe/);
     expect(err(renameVenue(ws, 'mercado', 'Faena Library'))).toMatch(/Ya existe/);
     expect(err(setActiveVenue(ws, 'nada'))).toMatch(/no existe/);
     const renamed = ok(renameVenue(ws, 'mercado', 'Faena Mercado Centro'));
@@ -100,7 +140,7 @@ describe('datos guardados', () => {
     const legacy = {
       version: 1,
       restaurantName: 'Mi restaurante',
-      positions: venue.positions,
+      positions: positionsOf(venue),
       staff: venue.staff,
       weeks: venue.weeks,
     };

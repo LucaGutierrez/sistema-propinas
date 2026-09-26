@@ -2,6 +2,7 @@
  * Qué puede hacer cada permiso dentro de un local. Es la regla única que usa la interfaz;
  * con el login, el servidor aplicará exactamente estas mismas reglas.
  */
+import type { DistributionConfig } from './config';
 import type { Member, Role } from './model';
 
 export interface Permissions {
@@ -16,12 +17,14 @@ export interface Permissions {
   /** Invitar y cambiar permisos. */
   manageAccess: boolean;
   /**
-   * Preparar y entregar sobres. PENDIENTE DE DECIDIR si el Editor también puede: por ahora,
-   * solo el Encargado (igual que revertir una entrega, que sí está decidido: DATABASE.md, A3).
+   * Preparar y entregar sobres. El Encargado siempre; el Editor, si la configuración del local
+   * lo permite (`envelopes = ENCARGADO_Y_EDITOR`). Revertir es siempre solo del Encargado.
    */
   handleEnvelopes: boolean;
   /** Revertir una entrega (con motivo). Solo el Encargado. */
   revertDelivery: boolean;
+  /** Cambiar la configuración de distribución del local. */
+  configureDistribution: boolean;
   /** Para "Solo lo suyo": su ficha en el personal. */
   ownStaffId: string | null;
 }
@@ -52,6 +55,7 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         manageAccess: true,
         handleEnvelopes: true,
         revertDelivery: true,
+        configureDistribution: true,
         ownStaffId,
       };
     case 'EDITOR':
@@ -64,6 +68,7 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         manageAccess: false,
         handleEnvelopes: false,
         revertDelivery: false,
+        configureDistribution: false,
         ownStaffId,
       };
     case 'LECTOR':
@@ -76,6 +81,7 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         manageAccess: false,
         handleEnvelopes: false,
         revertDelivery: false,
+        configureDistribution: false,
         ownStaffId,
       };
     case 'PROPIO':
@@ -88,12 +94,23 @@ export function permissionsFor(role: Role, ownStaffId: string | null = null): Pe
         manageAccess: false,
         handleEnvelopes: false,
         revertDelivery: false,
+        configureDistribution: false,
         ownStaffId,
       };
   }
 }
 
-/** Permisos efectivos: los del miembro simulado, o los del encargado dueño de la cuenta. */
-export function effectivePermissions(viewAs: Member | null): Permissions {
-  return viewAs ? permissionsFor(viewAs.role, viewAs.staffId) : permissionsFor('ENCARGADO');
+/**
+ * Permisos efectivos: los del miembro simulado, o los del encargado dueño de la cuenta.
+ * Algunos dependen de la configuración del local (p. ej. si el Editor maneja sobres).
+ */
+export function effectivePermissions(
+  viewAs: Member | null,
+  config?: DistributionConfig,
+): Permissions {
+  const base = viewAs ? permissionsFor(viewAs.role, viewAs.staffId) : permissionsFor('ENCARGADO');
+  if (base.role === 'EDITOR' && config?.envelopes === 'ENCARGADO_Y_EDITOR') {
+    return { ...base, handleEnvelopes: true };
+  }
+  return base;
 }

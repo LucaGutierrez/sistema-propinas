@@ -1,13 +1,6 @@
-import type { Metadata } from 'next';
-import { AccessGate } from '@/components/access/access-gate';
-import { RulesPage } from '@/components/rules/rules-page';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Reglas de cálculo' };
-
-export default function RulesRoute() {
-  return (
-    <AccessGate need="viewAll">
-      <RulesPage />
-    </AccessGate>
-  );
+/** "Reglas de cálculo" pasó a ser la configuración de distribución de cada local. */
+export default function RulesRedirect() {
+  redirect('/configuracion');
 }

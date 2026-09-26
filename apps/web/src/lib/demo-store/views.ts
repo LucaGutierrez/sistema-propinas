@@ -4,7 +4,7 @@ import type {
   DistributionTotalsView,
 } from '@/components/distribution/distribution-table';
 import type { ProvisionalResult } from '@/lib/distribution/provisional-formula';
-import { positionById, type Venue, type WeekResult } from './model';
+import { positionById, positionsOf, type Venue, type WeekResult } from './model';
 
 /** Filas de una semana cerrada (datos congelados al cierre). */
 export function closedRowsView(venue: Venue, result: WeekResult): DistributionRowView[] {
@@ -12,7 +12,7 @@ export function closedRowsView(venue: Venue, result: WeekResult): DistributionRo
     id: row.staffId,
     name: row.name,
     positionName: row.positionName,
-    tone: toneOf(venue.positions, row.positionId),
+    tone: toneOf(positionsOf(venue), row.positionId),
     hoursE2: BigInt(row.hoursE2),
     factorE4: BigInt(row.factorE4),
     pointsE6: BigInt(row.pointsE6),
@@ -47,7 +47,7 @@ export function previewRowsView(venue: Venue, result: ProvisionalResult): Distri
       id: item.id,
       name: member?.name ?? item.id,
       positionName: positionById(venue, positionId)?.name ?? '',
-      tone: toneOf(venue.positions, positionId),
+      tone: toneOf(positionsOf(venue), positionId),
       hoursE2: item.hoursE2,
       factorE4: item.factorE4,
       pointsE6: item.pointsE6,

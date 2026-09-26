@@ -1,9 +1,9 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (Fase 1 en curso: interfaz GUTIP como demo en el navegador — semanas, sobres, locales, permisos y reglas pendientes. Sin cambios en Prisma, migraciones ni Neon desde la Fase 0).
+Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. Sin cambios en Prisma, migraciones ni Neon desde la Fase 0).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
-Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [README.md](README.md) (comandos).
+Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
 
 ---
 
@@ -55,7 +55,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 ## 5. Decisiones ya aprobadas
 
 - Flujo real: distribución diaria (cálculo) → liquidación semanal (acumulación) → sobre (pago).
-- Adelantos: se descuentan al cerrar cada distribución diaria; el excedente queda como saldo pendiente aplicable a futuras distribuciones (ejemplo: propina $30.000, adelanto $40.000 → día $0, saldo $10.000).
+- Adelantos: se descuentan al cerrar cada distribución diaria; el excedente queda como saldo pendiente aplicable a futuras distribuciones (ejemplo: propina $30.000, adelanto $40.000 → día $0, saldo $10.000). **(2026-09-26)** Qué pasa con el excedente pasa a ser **configuración por restaurante, pendiente de confirmar con casos reales** (no regla estructural); lo estructural es que un sobre nunca es negativo. La demo solo implementa "pasa al período siguiente".
 - Pozo: mantener `team_id` opcional y soportar ambos modos; **no asumir una regla** hasta confirmarla con el negocio.
 - Correcciones tras entrega: reversión autorizada, con motivo obligatorio y auditoría; luego re-liquidación y nueva entrega.
 - Email: recuperación de contraseña **y** verificación de email desde el MVP (tabla `auth_tokens` + interfaz `Mailer`). El proveedor de producción se documenta antes de implementarlo.
@@ -69,6 +69,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 - **(2026-09-25)** Adelantos: con aplicaciones vigentes no se modifican (`amount_cents`, `employee_id`, `restaurant_id`, `date`) ni se anulan; primero se anulan las distribuciones que los consumieron. `VOIDED` es final y un adelanto `VOIDED` no se aplica. Nunca se borran físicamente (`DELETE`/`TRUNCATE` bloqueados por trigger): se anulan.
 - **(2026-09-25)** Sobres: `DELIVERED` congela `delivered_*`, `delivery_note` y `prepared_*` mientras siga entregado; un error en la entrega se corrige con la reversión `DELIVERED → PREPARED`, que solo limpia la entrega (incluida la nota) y no toca `prepared_*`; `VOIDED` congela todo el sobre.
 - **(2026-09-25)** Liquidaciones: `CLOSED` y `VOIDED` congelan toda la fila (incluidos `notes`, `closed_*`, `voided_*`); `CLOSED → VOIDED` solo completa `voided_*`.
+- **(2026-09-26) Principio de diseño: la distribución se configura por restaurante.** GUTIP no tiene una única regla de reparto: tiene reglas estructurales (iguales para todos) y parámetros que elige cada restaurante (período, cuándo se reparte, horas, fuentes, grupos, pesos, redondeo, adelantos, quién entrega sobres). La configuración de un restaurante no afecta a otros y cada cierre guarda la que usó. **Library (Hotel Faena)** es el caso de referencia para validar, no el diseño del producto. Detalle en `ARCHITECTURE.md` §2 (principio 7) y §2.1. Library confirmó: pozo semanal, reparto una vez por semana, horas totales de la semana cargadas al cerrar.
 
 ## 6. Qué se implementó hasta ahora
 
@@ -120,7 +121,7 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 - **Historial:** propina generada por mes, semanas cerradas y total en sobres.
 - **Acceso por local:** cuatro permisos (Encargado, Editor, Solo ver, Solo lo suyo), invitaciones pendientes, cambiar permiso, quitar acceso, **"Ver como…"** para probar lo que ve cada uno. Las secciones sin permiso muestran "No tenés acceso" aunque se escriba la URL. Reglas en `apps/web/src/lib/demo-store/permissions.ts`.
 - **Mis sobres:** cada persona ve solo sus sobres (con estado de entrega), sus horas y adelantos.
-- **Reglas de cálculo** (`/reglas`): muestra la fórmula provisional y cada decisión pendiente (qué hace hoy la demo y qué falta decidir). La lista vive en `apps/web/src/lib/demo/pending-decisions.ts`.
+- **Configuración de distribución** (`/configuracion`; `/reglas` redirige) — modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md): cada local tiene una **política versionada** que arranca con la **configuración estándar de GUTIP** (válida: puede cerrar enseguida; incluye puestos y pesos iniciales) o con una copia de la de otro local. Los **puestos y sus pesos son parte de la política**; el personal no. Cada cambio (parámetro, puesto o peso) crea una versión nueva, vigente para los próximos períodos y para la semana abierta (registrado); una semana reabierta conserva su versión salvo elección explícita con motivo. Cada cierre guarda la versión y una copia de los valores usados; los cierres nunca cambian. El cierre se bloquea solo si una personalización deja algo **por definir**. Pantalla con estándar/personalizado por parámetro, edición de puestos y pesos, historial de versiones y validación de Library (no bloquea). Ya configurables: redondeo (centavo o peso) y quién maneja los sobres.
 
 **En demo / provisional (funciona, pero no es definitivo):**
 - **Fórmula PROVISIONAL** (`apps/web/src/lib/distribution/provisional-formula.ts`, `FORMULA_STATUS = 'PROVISIONAL'`): pozo = suma de los días; puntos = horas semanales × factor; reparto por mayor resto al centavo; sobre = importe − adelantos. Vive en la app, **no** en el motor, cuyo contrato no se cambió.
@@ -129,7 +130,7 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 - Quién aparece como autor de una acción es "Encargado" o la persona simulada con "Ver como…".
 - Los datos demo usan los **nombres reales** de la planilla (`apps/web/src/lib/demo/data.ts`): anonimizar si el repositorio es público.
 
-**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 62, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo), reglas, registro de adelantos (alta, anulación, conversión de datos viejos) y anular / reabrir una semana cerrada. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
+**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 79, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo), reglas, registro de adelantos (alta, anulación, conversión de datos viejos) y anular / reabrir una semana cerrada. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
 
 ## 7. Qué falta de la Fase 0
 
@@ -187,18 +188,18 @@ pnpm --filter @propinas/web build
 | A4 | Verificación de la fórmula | **Parcialmente resuelto (2026-09-26).** Se analizó la foto de la planilla (`reference/`, ignorada por git): confirma el reparto proporcional a horas × factor y el descuento del adelanto. Diferencias con el motor: horas semanales (> 24), factores con más decimales y distintos dentro de un puesto, redondeo a pesos. Quedan P1–P7. |
 | D1 | Pozo del negocio real | **Reemplazado por P2** (porcentajes por grupo). |
 
-**Reglas de negocio pendientes de la planilla** (la demo usa un comportamiento provisional para cada una; la misma lista se ve en la pantalla "Reglas de cálculo"):
+**Parámetros de distribución (P1–P8) — configuración por restaurante, no reglas globales** (2026-09-26). Cada restaurante elige su valor en "Configuración de distribución". La tabla dice qué opciones calcula GUTIP hoy y qué sabemos de Library (caso de referencia). Lo que no sabemos queda como configuración pendiente, nunca como regla inventada:
 
-| # | Tema | Hoy en la demo (provisional) | Falta decidir |
+| # | Parámetro | GUTIP calcula hoy | Library (referencia) |
 |---|---|---|---|
-| P1 | Pozo diario y horas semanales | Se anota el pozo de cada día; al cerrar la semana se reparte la suma con las horas totales de la semana. | ¿Reparto por día (con horas semanales o acumuladas hasta ese día) con snapshot diario? ¿Cuándo se congelan las horas? |
-| P2 | Porcentajes por grupo | No hay grupos: todo el pozo se reparte junto por puntos. | Porcentaje de cada grupo; qué pasa si un grupo no trabajó ese día. |
-| P3 | Puntos y factores | Horas × factor del puesto (hasta 4 decimales), factores redondeados de la planilla. | ¿Factor por puesto o por persona? ¿Valor exacto (p. ej. 0,65 ÷ 45)? |
-| P4 | Redondeo | Al centavo, mayor resto. | ¿Pesos enteros? (con mayor resto en pesos se reproduce exacta la planilla). |
-| P5 | Recepción y Cocina | No se usan (en 0 en la planilla). | ¿Fuentes del mismo pozo o pozos aparte? |
-| P6 | Adelantos en el tiempo | Cada adelanto se registra con su fecha, pero se descuentan todos del sobre de la semana sin mirar la fecha; el saldo pasa a la siguiente. | ¿De toda la semana o solo desde su fecha? ¿Puede elegirse descontar un adelanto en una semana posterior? |
-| P7 | Tests del Excel | 3 `todo` en el motor. | Se completan con P1–P4 resueltos (y el `.xlsx`, no solo la foto). |
-| P8 | Quién prepara y entrega sobres | Solo el Encargado (revertir: decidido, A3). | ¿El Editor también puede? |
+| P1 | Cuándo se reparte y qué horas se usan | Una vez por período, con las horas totales del período (cargadas al cerrar). Por día / horas del día / acumuladas: próximamente. | **Confirmado:** pozo semanal, reparto semanal, horas totales de la semana. |
+| P2 | Grupos y porcentajes | Sin grupos. % por grupo (+ qué pasa si un grupo no trabajó): próximamente. | La planilla no muestra %: sin confirmar. |
+| P3 | Peso de cada hora | Por puesto (factor con hasta 4 decimales). Con excepción por persona / por persona: próximamente. | Factor = peso ÷ 45; en Bacha, factores distintos entre personas: sin confirmar. |
+| P4 | Redondeo | Centavos o pesos enteros (configurable). $10 / $100 (+ destino del sobrante): próximamente. | Pesos enteros reproducen la planilla exacta: sin confirmar. |
+| P5 | Fuentes del pozo | Un monto por día. Varias fuentes sumadas / pozos separados: próximamente. | Efectivo; "Recepción" y "Cocina" en 0: pendiente. |
+| P6 | Descuento de adelantos | De todo el período (cada adelanto se registra con fecha). Desde su fecha / a elección o en cuotas: próximamente. | Se descuenta en la misma planilla; sin fechas: pendiente. |
+| P7 | Validación con datos reales | — (no es un parámetro) | Falta el `.xlsx` (fórmulas, Hoja2/Hoja3) y más semanas para completar los 3 `todo` del motor. |
+| P8 | Quién prepara y entrega sobres | Solo Encargado, o Encargado y Editor (configurable). Permiso "Pagador": próximamente. Revertir: siempre Encargado (A3). | Pendiente. |
 | — | Verificación de email obligatoria | Propuesta: el usuario no accede a la app hasta verificar el correo (con opción de reenviar). Confirmar. |
 | — | Regla de días fuera de una liquidación cerrada | Una distribución con fecha dentro de una semana ya liquidada se rechaza hasta anular la liquidación. Confirmar que es lo deseado. |
 | — | Versiones de PostgreSQL | Resuelto: Neon ofrece 18.6 y PGlite 18.3 (misma versión mayor). |
@@ -221,9 +222,10 @@ Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**)
 
 **Cuando retomemos: la Fase 0 está cerrada (Neon migrado sin drift, CI en verde). La Fase 1 avanza como demo en el navegador; la persistencia real espera la aprobación del plan de §11 y las decisiones P1–P6.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 62 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
-2. **Decisiones de negocio:** P1–P6 y P8 (§10), A1. Se pueden revisar en la pantalla "Reglas de cálculo".
-3. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
-4. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
+1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 79 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
+2. **Configuración de Library:** confirmar con el restaurante los parámetros pendientes (§10, pantalla "Configuración de distribución") y conseguir el `.xlsx` (P7). No son decisiones globales de GUTIP.
+3. **Diseño de datos (Prisma):** revisar primero la demo y [CONFIG-MODEL.md](CONFIG-MODEL.md); recién después diseñar las tablas de la política versionada, el período fijado a una versión y el snapshot del cierre (con aprobación explícita).
+4. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
+5. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
 
 No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.

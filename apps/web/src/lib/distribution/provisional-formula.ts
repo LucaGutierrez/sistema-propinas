@@ -12,6 +12,10 @@
  *
  * Diferencias conocidas con el motor: las horas son las ACUMULADAS DE LA SEMANA (sin límite
  * de 24) y el factor admite hasta 4 decimales. Aritmética exacta con bigint, sin floats.
+ *
+ * La unidad de redondeo es configuración de cada restaurante (`unitCents`: 1 = centavo,
+ * 100 = peso). El reparto se hace por mayor resto EN ESA UNIDAD, así que la suma coincide
+ * siempre con el pozo; por eso el pozo tiene que ser múltiplo de la unidad.
  */
 export const FORMULA_STATUS = 'PROVISIONAL' as const;
 
@@ -53,13 +57,27 @@ export interface ProvisionalResult {
 
 export class ProvisionalFormulaError extends Error {}
 
+export interface ProvisionalOptions {
+  /** Unidad de reparto en centavos: 1n = centavo (por defecto), 100n = peso. */
+  unitCents?: bigint;
+}
+
 export function computeProvisionalDistribution(
   totalCents: bigint,
   rows: readonly ProvisionalRow[],
+  options: ProvisionalOptions = {},
 ): ProvisionalResult {
   if (totalCents <= 0n) {
     throw new ProvisionalFormulaError('El total de propina debe ser mayor que cero.');
   }
+  const unit = options.unitCents ?? 1n;
+  if (unit <= 0n) throw new ProvisionalFormulaError('La unidad de redondeo debe ser positiva.');
+  if (totalCents % unit !== 0n) {
+    throw new ProvisionalFormulaError(
+      'Con el redondeo configurado, el pozo tiene que ser un número entero de esa unidad (sin centavos sueltos).',
+    );
+  }
+  const totalUnits = totalCents / unit;
   const ids = new Set<string>();
   for (const row of rows) {
     if (ids.has(row.id)) throw new ProvisionalFormulaError(`Empleado repetido: ${row.id}`);
@@ -75,14 +93,14 @@ export function computeProvisionalDistribution(
     throw new ProvisionalFormulaError('Nadie tiene puntos: cargá horas y factor.');
   }
 
-  // Mayor resto en centavos; empates: más puntos, luego el orden de la tabla.
+  // Mayor resto en la unidad configurada; empates: más puntos, luego el orden de la tabla.
   const parts = points.map((p, index) => ({
     index,
     points: p,
-    base: (totalCents * p) / totalPointsE6,
-    remainder: (totalCents * p) % totalPointsE6,
+    base: (totalUnits * p) / totalPointsE6,
+    remainder: (totalUnits * p) % totalPointsE6,
   }));
-  let leftover = totalCents - parts.reduce((sum, part) => sum + part.base, 0n);
+  let leftover = totalUnits - parts.reduce((sum, part) => sum + part.base, 0n);
   const amounts = parts.map((part) => part.base);
   const ranked = parts
     .filter((part) => part.points > 0n)
@@ -99,7 +117,7 @@ export function computeProvisionalDistribution(
 
   const items = rows.map((row, index): ProvisionalItem => {
     const pointsE6 = points[index] ?? 0n;
-    const amountCents = amounts[index] ?? 0n;
+    const amountCents = (amounts[index] ?? 0n) * unit;
     const advanceAppliedCents = row.advanceCents < amountCents ? row.advanceCents : amountCents;
     return {
       id: row.id,

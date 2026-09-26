@@ -165,9 +165,10 @@ function VenueCard({ venue, active, month }: { venue: Venue; active: boolean; mo
 }
 
 function NewVenueForm() {
-  const { workspace, venue, applyWorkspace } = useDemoStore();
+  const { workspace, venue, applyWorkspace, viewAs } = useDemoStore();
   const [name, setName] = useState('');
-  const [copyPositions, setCopyPositions] = useState(true);
+  /** Por defecto, la configuración estándar de GUTIP. */
+  const [start, setStart] = useState<'ESTANDAR' | 'COPIA'>('ESTANDAR');
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
   if (!workspace || !venue) return null;
 
@@ -178,7 +179,9 @@ function NewVenueForm() {
       createVenue(ws, {
         id: newId('local'),
         name,
-        copyPositionsFrom: copyPositions ? ws.activeVenueId : null,
+        copyPolicyFrom: start === 'COPIA' ? ws.activeVenueId : null,
+        by: viewAs?.name ?? 'Encargado',
+        at: new Date().toISOString(),
       }),
     );
     if (error) {
@@ -197,7 +200,8 @@ function NewVenueForm() {
           Nuevo local
         </CardTitle>
         <CardDescription>
-          Por ejemplo "Faena Mercado". Empieza sin personal ni semanas.
+          Por ejemplo "Faena Mercado". Empieza sin personal ni semanas, con una política lista para
+          calcular que después se puede personalizar.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -215,20 +219,39 @@ function NewVenueForm() {
               }}
             />
           </div>
-          <label className="flex items-start gap-2.5 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 accent-[var(--primary)]"
-              checked={copyPositions}
-              onChange={(event) => setCopyPositions(event.target.checked)}
-            />
-            <span>
-              Copiar los puestos y factores de <strong>{venue.name}</strong>
-              <span className="block text-xs text-muted-foreground">
-                El personal no se copia: cada local tiene el suyo.
+          <fieldset className="space-y-2">
+            <legend className="mb-1 text-sm font-medium">Política de distribución inicial</legend>
+            <label className="flex items-start gap-2.5 text-sm">
+              <input
+                type="radio"
+                name="politica-inicial"
+                className="mt-0.5 size-4 accent-[var(--primary)]"
+                checked={start === 'ESTANDAR'}
+                onChange={() => setStart('ESTANDAR')}
+              />
+              <span>
+                Configuración estándar de GUTIP
+                <span className="block text-xs text-muted-foreground">
+                  Con puestos y porciones iniciales. Se puede cerrar enseguida.
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+            <label className="flex items-start gap-2.5 text-sm">
+              <input
+                type="radio"
+                name="politica-inicial"
+                className="mt-0.5 size-4 accent-[var(--primary)]"
+                checked={start === 'COPIA'}
+                onChange={() => setStart('COPIA')}
+              />
+              <span>
+                Copiar la política de <strong>{venue.name}</strong>
+                <span className="block text-xs text-muted-foreground">
+                  Una copia independiente. El personal no se copia: cada local tiene el suyo.
+                </span>
+              </span>
+            </label>
+          </fieldset>
           {message ? (
             <p
               role={message.error ? 'alert' : 'status'}

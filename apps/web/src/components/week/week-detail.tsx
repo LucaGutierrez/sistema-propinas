@@ -19,9 +19,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDayMonth, formatWeekRange, formatWeekday, weekDays } from '@/lib/dates';
 import { formatMoney, formatMoneyShort, parseMoney } from '@/lib/decimal';
-import { findWeek, weekTotal } from '@/lib/demo-store/model';
+import { findWeek, weekTotal, type WeekResult } from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
 import { closedRowsView, closedTotalsView } from '@/lib/demo-store/views';
+import { optionLabel } from '@/lib/demo-store/config';
 import { envelopeSummary } from '@/lib/demo-store/envelopes';
 import { AdvancesCard } from './advances-card';
 import { EnvelopesPrintSheet, EnvelopesSection } from './envelopes-section';
@@ -92,7 +93,7 @@ export function WeekDetail({ weekId }: { weekId: string }) {
         </Link>
         <PageHeader
           title={formatWeekRange(week.startDate)}
-          description={`Cerrada el ${CLOSED_AT.format(new Date(result.closedAt))}`}
+          description={closedDescription(result)}
           actions={
             <>
               <ProvisionalBadge />
@@ -169,4 +170,14 @@ export function WeekDetail({ weekId }: { weekId: string }) {
       </div>
     </>
   );
+}
+
+/** "Cerrada el … · política versión N · redondeo: …" (datos del cierre, no de la política actual). */
+function closedDescription(result: WeekResult): string {
+  const parts = [`Cerrada el ${CLOSED_AT.format(new Date(result.closedAt))}`];
+  if (result.policyVersion !== undefined) parts.push(`política versión ${result.policyVersion}`);
+  if (result.config) {
+    parts.push(`redondeo: ${optionLabel('rounding', result.config.rounding).toLowerCase()}`);
+  }
+  return parts.join(' · ');
 }

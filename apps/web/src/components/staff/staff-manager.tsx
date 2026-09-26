@@ -1,17 +1,17 @@
 'use client';
 
 import { BriefcaseIcon, UserPlusIcon } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { PositionBadge, toneOf } from '@/components/gutip/badges';
 import { LoadingState } from '@/components/gutip/loading';
 import { PageHeader } from '@/components/layout/page-header';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  addPosition,
+  positionsOf,
   addStaff,
   setStaffActive,
   setStaffPosition,
@@ -53,7 +53,7 @@ export function StaffManager() {
     <>
       <PageHeader
         title="Personal"
-        description="Quién participa del reparto, su puesto y el factor de cada puesto."
+        description="Quiénes trabajan y en qué puesto. Agregar, dar de baja o cambiar el puesto de alguien no cambia la política."
       />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -108,7 +108,7 @@ export function StaffManager() {
 function StaffRow({ venue, member }: { venue: Venue; member: Staff }) {
   const { apply, perms } = useDemoStore();
   const [editing, setEditing] = useState(false);
-  const position = venue.positions.find((p) => p.id === member.positionId);
+  const position = positionsOf(venue).find((p) => p.id === member.positionId);
   const canEdit = perms.manageStaff;
 
   return (
@@ -132,7 +132,7 @@ function StaffRow({ venue, member }: { venue: Venue; member: Staff }) {
           onBlur={() => setEditing(false)}
           autoFocus
         >
-          {venue.positions.map((p) => (
+          {positionsOf(venue).map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} ({p.factor})
             </option>
@@ -148,7 +148,7 @@ function StaffRow({ venue, member }: { venue: Venue; member: Staff }) {
         >
           <PositionBadge
             name={position?.name ?? ''}
-            tone={toneOf(venue.positions, member.positionId)}
+            tone={toneOf(positionsOf(venue), member.positionId)}
           />
         </button>
       )}
@@ -180,10 +180,10 @@ function AddStaffForm({ venue }: { venue: Venue }) {
   const [chosenPositionId, setPositionId] = useState('');
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
   // Si todavía no se eligió (o el local no tenía puestos al abrir), se usa el primero.
-  const positionId = venue.positions.some((p) => p.id === chosenPositionId)
+  const positionId = positionsOf(venue).some((p) => p.id === chosenPositionId)
     ? chosenPositionId
-    : (venue.positions[0]?.id ?? '');
-  const noPositions = venue.positions.length === 0;
+    : (positionsOf(venue)[0]?.id ?? '');
+  const noPositions = positionsOf(venue).length === 0;
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -234,7 +234,7 @@ function AddStaffForm({ venue }: { venue: Venue }) {
               disabled={noPositions}
               onChange={(event) => setPositionId(event.target.value)}
             >
-              {venue.positions.map((p) => (
+              {positionsOf(venue).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} (factor {p.factor})
                 </option>
@@ -259,22 +259,9 @@ function AddStaffForm({ venue }: { venue: Venue }) {
   );
 }
 
+/** Los puestos y sus pesos son parte de la política: acá solo se muestran. */
 function PositionsCard({ venue }: { venue: Venue }) {
-  const { apply, perms } = useDemoStore();
-  const [name, setName] = useState('');
-  const [factor, setFactor] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const failure = apply((s) => addPosition(s, { id: newId('puesto'), name, factor }));
-    setError(failure);
-    if (!failure) {
-      setName('');
-      setFactor('');
-    }
-  }
-
+  const positions = positionsOf(venue);
   return (
     <Card>
       <CardHeader>
@@ -282,65 +269,30 @@ function PositionsCard({ venue }: { venue: Venue }) {
           <BriefcaseIcon className="size-4 text-primary" />
           Puestos
         </CardTitle>
-        <CardDescription>El factor define cuánto pesa cada hora de ese puesto.</CardDescription>
+        <CardDescription>
+          Los puestos y sus porciones son parte de la política de distribución (versión{' '}
+          {venue.policy.current}).
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <ul className="space-y-2">
-          {venue.positions.map((position) => {
+          {positions.map((position) => {
             const people = venue.staff.filter(
               (s) => s.active && s.positionId === position.id,
             ).length;
             return (
               <li key={position.id} className="flex items-center justify-between gap-2 text-sm">
-                <PositionBadge name={position.name} tone={toneOf(venue.positions, position.id)} />
+                <PositionBadge name={position.name} tone={toneOf(positions, position.id)} />
                 <span className="tabular text-muted-foreground">
-                  factor {position.factor} · {people} {people === 1 ? 'persona' : 'personas'}
+                  porción {position.factor} · {people} {people === 1 ? 'persona' : 'personas'}
                 </span>
               </li>
             );
           })}
         </ul>
-        {perms.manageStaff ? (
-          <form onSubmit={submit} className="space-y-3 border-t pt-4">
-            <p className="text-sm font-medium">Nuevo puesto</p>
-            <div className="grid grid-cols-5 gap-2">
-              <Input
-                aria-label="Nombre del puesto"
-                className="col-span-3"
-                placeholder="Ej.: Cocina"
-                value={name}
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setError(null);
-                }}
-              />
-              <Input
-                aria-label="Factor del puesto"
-                className="tabular col-span-2"
-                inputMode="decimal"
-                placeholder="0,015"
-                value={factor}
-                onChange={(event) => {
-                  setFactor(event.target.value);
-                  setError(null);
-                }}
-              />
-            </div>
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            ) : null}
-            <Button type="submit" variant="outline" className="w-full">
-              Agregar puesto
-            </Button>
-          </form>
-        ) : null}
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="outline" className="border-dashed text-muted-foreground">
-            Fórmula provisional
-          </Badge>
-        </div>
+        <Button asChild variant="outline" className="w-full">
+          <Link href="/configuracion">Editar puestos y porciones</Link>
+        </Button>
       </CardContent>
     </Card>
   );

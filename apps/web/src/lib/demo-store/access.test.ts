@@ -98,7 +98,12 @@ describe('"Ver como…"', () => {
     ws = on.workspace;
     expect(ws.viewAsMemberId).toBe('miembro-leo');
 
-    const created = createVenue(ws, { id: 'mercado', name: 'Faena Mercado' });
+    const created = createVenue(ws, {
+      id: 'mercado',
+      name: 'Faena Mercado',
+      by: 'Encargado',
+      at: '2026-09-26T12:00:00.000Z',
+    });
     if (!created.ok) throw new Error(created.error);
     expect(created.workspace.viewAsMemberId).toBeNull();
     expect(err(setViewAs(created.workspace, 'miembro-leo'))).toMatch(/no tiene acceso/);

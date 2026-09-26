@@ -3,7 +3,7 @@ import {
   HistoryIcon,
   LayoutDashboardIcon,
   MailIcon,
-  ScaleIcon,
+  SlidersHorizontalIcon,
   ShieldCheckIcon,
   StoreIcon,
   UsersIcon,
@@ -22,7 +22,11 @@ const WEEK: NavItem = { href: '/semana', label: 'Semana actual', icon: CalendarD
 const HISTORY: NavItem = { href: '/historial', label: 'Historial', icon: HistoryIcon };
 const STAFF: NavItem = { href: '/personal', label: 'Personal', icon: UsersIcon };
 const MY_ENVELOPES: NavItem = { href: '/mis-sobres', label: 'Mis sobres', icon: MailIcon };
-const RULES: NavItem = { href: '/reglas', label: 'Reglas de cálculo', icon: ScaleIcon };
+const CONFIG: NavItem = {
+  href: '/configuracion',
+  label: 'Configuración de distribución',
+  icon: SlidersHorizontalIcon,
+};
 const ACCESS: NavItem = { href: '/acceso', label: 'Acceso', icon: ShieldCheckIcon };
 const VENUES: NavItem = { href: '/locales', label: 'Mis locales', icon: StoreIcon };
 
@@ -31,7 +35,7 @@ export function venueNav(perms: Permissions): NavItem[] {
   if (!perms.viewAll) return [MY_ENVELOPES];
   const items = [HOME, WEEK, HISTORY, STAFF];
   if (perms.ownStaffId) items.push(MY_ENVELOPES);
-  items.push(RULES);
+  items.push(CONFIG);
   if (perms.manageAccess) items.push(ACCESS);
   return items;
 }

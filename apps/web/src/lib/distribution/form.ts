@@ -4,6 +4,7 @@ import {
   HOURS_SCALE,
   ProvisionalFormulaError,
   computeProvisionalDistribution,
+  type ProvisionalOptions,
   type ProvisionalResult,
 } from './provisional-formula';
 
@@ -44,6 +45,7 @@ export function calculateFromForm(form: DistributionForm): CalculationOutcome {
 export function calculateFromRows(
   totalCents: bigint,
   formRows: readonly DistributionFormRow[],
+  options: ProvisionalOptions = {},
 ): CalculationOutcome {
   const errors: string[] = [];
   if (totalCents <= 0n) errors.push('El pozo de la semana tiene que ser mayor que cero.');
@@ -65,7 +67,7 @@ export function calculateFromRows(
 
   if (errors.length > 0) return { ok: false, errors };
   try {
-    return { ok: true, result: computeProvisionalDistribution(totalCents, rows) };
+    return { ok: true, result: computeProvisionalDistribution(totalCents, rows, options) };
   } catch (error) {
     if (error instanceof ProvisionalFormulaError) return { ok: false, errors: [error.message] };
     throw error;

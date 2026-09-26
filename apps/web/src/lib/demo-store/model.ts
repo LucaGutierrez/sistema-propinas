@@ -3,14 +3,23 @@
  * Funciones puras sobre un estado JSON (se guarda en el navegador). Los importes se guardan
  * como strings de centavos porque JSON no admite bigint.
  *
- * Flujo acordado (2026-09-26): el encargado anota el pozo de cada día; al cerrar la semana se
- * suman los pozos y se hace UN reparto con las horas totales de la semana (fórmula provisional).
+ * Cómo se calcula lo define la política versionada de cada local (policy.ts, CONFIG-MODEL.md).
+ * Cada semana queda fijada a una versión; el cierre guarda la versión y los valores usados.
  */
 import { addDays, formatWeekRange, isIsoDate, mondayOf, weekDays } from '@/lib/dates';
-import { formatScaled, parseDecimal, parseMoney } from '@/lib/decimal';
+import { formatScaled, parseMoney } from '@/lib/decimal';
 import { calculateFromRows, type DistributionFormRow } from '@/lib/distribution/form';
-import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
-import { RESTAURANT_NAME, SEED_POSITIONS, SEED_STAFF, SEED_WEEK } from '@/lib/demo/data';
+import { RESTAURANT_NAME, SEED_STAFF, SEED_WEEK } from '@/lib/demo/data';
+import type { DistributionConfig } from './config';
+import {
+  currentVersion,
+  normalizePolicy,
+  policyGaps,
+  standardPolicy,
+  versionOf,
+  type PolicyVersion,
+  type VenuePolicy,
+} from './policy';
 import type { Envelope } from './envelopes';
 
 export type WeekStatus = 'ABIERTA' | 'CERRADA';
@@ -51,6 +60,10 @@ export interface WeekResult {
   totalAdvanceCents: string;
   totalFinalCents: string;
   rows: ClosedRow[];
+  /** Versión de la política con la que se cerró. */
+  policyVersion?: number;
+  /** Copia de los valores de la política usados (snapshot: cambiarla después no afecta este cierre). */
+  config?: DistributionConfig;
 }
 
 /**
@@ -99,9 +112,22 @@ export interface Week {
   /** 1 la primera vez; sube cada vez que se anula el cierre y se vuelve a cerrar. */
   revision?: number;
   voidedRevisions?: VoidedRevision[];
+  /** Versión de la política fijada a este período (se fija al empezar la semana). */
+  policyVersion?: number;
+  /** Cambios de versión mientras la semana estuvo abierta: quién, cuándo, de cuál a cuál y por qué. */
+  policyLog?: PolicyLogEntry[];
 }
 
-/** Un local (p. ej. "Faena Library"): su propio personal, puestos, semanas e historial. */
+export interface PolicyLogEntry {
+  at: string;
+  by: string;
+  from: number;
+  to: number;
+  /** Automático al cambiar la política con la semana abierta, o elegido a mano (con motivo). */
+  automatic: boolean;
+  reason?: string;
+}
+
 /** Permiso de una persona con acceso a un local. */
 export type Role = 'ENCARGADO' | 'EDITOR' | 'LECTOR' | 'PROPIO';
 
@@ -118,10 +144,13 @@ export interface Member {
   invitedAt: string;
 }
 
+/** Un local (p. ej. "Faena Library"): su política, su personal, sus semanas y su historial. */
 export interface Venue {
   id: string;
   name: string;
-  positions: Position[];
+  /** Cómo calcula este local (versionada; incluye los puestos con su peso). Solo afecta a este local. */
+  policy: VenuePolicy;
+  /** Quiénes trabajan y en qué puesto. No es parte de la política. */
   staff: Staff[];
   weeks: Week[];
   members: Member[];
@@ -147,8 +176,21 @@ export function sortedWeeks(venue: Venue): Week[] {
   return [...venue.weeks].sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
 }
 
+/** Puestos de la versión vigente de la política. */
+export function positionsOf(venue: Venue): Position[] {
+  return currentVersion(venue.policy).positions;
+}
+
 export function positionById(venue: Venue, id: string): Position | undefined {
-  return venue.positions.find((p) => p.id === id);
+  return positionsOf(venue).find((p) => p.id === id);
+}
+
+/** Versión de la política con la que se calcula la semana (la fijada al empezarla). */
+export function weekPolicy(venue: Venue, week: Week): PolicyVersion {
+  return (
+    (week.policyVersion !== undefined ? versionOf(venue.policy, week.policyVersion) : undefined) ??
+    currentVersion(venue.policy)
+  );
 }
 
 export interface WeekTotal {
@@ -177,15 +219,21 @@ export function weekTotal(week: Week): WeekTotal {
 
 /** Filas del reparto: personal activo con el factor de su puesto. */
 export function weekFormRows(venue: Venue, week: Week): DistributionFormRow[] {
+  const policy = weekPolicy(venue, week);
   return venue.staff
     .filter((member) => member.active)
     .map((member) => ({
       id: member.id,
       name: member.name,
       hours: week.hours[member.id] ?? '',
-      factor: positionById(venue, member.positionId)?.factor ?? '',
+      factor: policy.positions.find((p) => p.id === member.positionId)?.factor ?? '',
       advance: formatAdvance(advanceTotal(week, member.id)),
     }));
+}
+
+/** Unidad de reparto según la configuración del local. Solo están implementadas centavo y peso. */
+export function roundingUnitCents(values: DistributionConfig): bigint {
+  return values.rounding === 'PESO' ? 100n : 1n;
 }
 
 /** Adelantos vigentes (no anulados) de la semana. */
@@ -213,7 +261,9 @@ export function calculateWeek(venue: Venue, week: Week) {
       errors: total.invalidDays.map((date) => `Pozo inválido el día ${date}.`),
     };
   }
-  return calculateFromRows(total.totalCents, weekFormRows(venue, week));
+  return calculateFromRows(total.totalCents, weekFormRows(venue, week), {
+    unitCents: roundingUnitCents(weekPolicy(venue, week).values),
+  });
 }
 
 export interface MonthSummary {
@@ -309,6 +359,8 @@ export function startWeek(venue: Venue, startDate: string, id: string, at: strin
     hours: {},
     advanceEntries,
     revision: 1,
+    // El período queda fijado a la versión vigente de la política.
+    policyVersion: venue.policy.current,
   };
   return { ok: true, venue: { ...venue, weeks: [...venue.weeks, week] } };
 }
@@ -348,6 +400,8 @@ export function closeWeek(venue: Venue, weekId: string, closedAt: string): Outco
   const week = findWeek(venue, weekId);
   if (!week) return fail('La semana no existe.');
   if (week.status !== 'ABIERTA') return fail('La semana ya está cerrada.');
+  const gaps = policyGaps(weekPolicy(venue, week));
+  if (gaps.length > 0) return fail(`La política tiene puntos por definir: ${gaps.join(' ')}`);
   const outcome = calculateWeek(venue, week);
   if (!outcome.ok) return fail(outcome.errors.join(' '));
 
@@ -360,7 +414,9 @@ export function closeWeek(venue: Venue, weekId: string, closedAt: string): Outco
     )
     .map((item) => {
       const member = staffById.get(item.id);
-      const position = member ? positionById(venue, member.positionId) : undefined;
+      const position = member
+        ? weekPolicy(venue, week).positions.find((p) => p.id === member.positionId)
+        : undefined;
       return {
         staffId: item.id,
         name: member?.name ?? item.id,
@@ -388,6 +444,8 @@ export function closeWeek(venue: Venue, weekId: string, closedAt: string): Outco
       totalPointsE6: result.totalPointsE6.toString(),
       totalAdvanceCents: result.totalAdvanceCents.toString(),
       totalFinalCents: result.totalFinalCents.toString(),
+      policyVersion: weekPolicy(venue, week).number,
+      config: { ...weekPolicy(venue, week).values },
       rows,
     },
   };
@@ -400,24 +458,7 @@ export function closeWeek(venue: Venue, weekId: string, closedAt: string): Outco
 // ---------------------------------------------------------------------------------------------
 // Personal y puestos
 
-export function addPosition(venue: Venue, position: Position): Outcome {
-  const name = position.name.trim();
-  if (name === '') return fail('Poné un nombre para el puesto.');
-  if (venue.positions.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
-    return fail(`Ya existe el puesto "${name}".`);
-  }
-  const factorE4 = parseDecimal(position.factor, FACTOR_SCALE);
-  if (factorE4 === null || factorE4 === 0n) {
-    return fail('El factor tiene que ser un número mayor que cero (hasta 4 decimales).');
-  }
-  return {
-    ok: true,
-    venue: {
-      ...venue,
-      positions: [...venue.positions, { ...position, name, factor: position.factor.trim() }],
-    },
-  };
-}
+// Los puestos (con su peso) son parte de la política: se agregan o cambian en policy-ops.ts.
 
 export function addStaff(venue: Venue, member: Omit<Staff, 'active'>): Outcome {
   const name = member.name.trim();
@@ -460,8 +501,9 @@ export function seedVenue(closedAt: string): Venue {
   const base: Venue = {
     id: 'local-demo',
     name: RESTAURANT_NAME,
-    positions: SEED_POSITIONS.map((p) => ({ ...p })),
+    policy: standardPolicy(closedAt),
     staff: SEED_STAFF.map(({ id, name, positionId }) => ({ id, name, positionId, active: true })),
+    // La planilla de referencia es de Library (Hotel Faena): lo que ese restaurante confirmó.
     // Dos invitaciones de ejemplo para probar "Ver como…".
     members: [
       {
@@ -501,6 +543,7 @@ export function seedVenue(closedAt: string): Venue {
           createdAt: closedAt,
         })),
         revision: 1,
+        policyVersion: 1,
         note: SEED_WEEK.note,
       },
     ],
@@ -511,15 +554,8 @@ export function seedVenue(closedAt: string): Venue {
 }
 
 /** Local nuevo y vacío, con los puestos que se indiquen (se copian, no se comparten). */
-export function emptyVenue(id: string, name: string, positions: readonly Position[]): Venue {
-  return {
-    id,
-    name,
-    positions: positions.map((p) => ({ ...p })),
-    staff: [],
-    weeks: [],
-    members: [],
-  };
+export function emptyVenue(id: string, name: string, policy: VenuePolicy): Venue {
+  return { id, name, policy, staff: [], weeks: [], members: [] };
 }
 
 /**
@@ -532,13 +568,13 @@ export function normalizeVenue(value: unknown): Venue | null {
   const valid =
     typeof v.id === 'string' &&
     typeof v.name === 'string' &&
-    Array.isArray(v.positions) &&
     Array.isArray(v.staff) &&
     Array.isArray(v.weeks);
   if (!valid) return null;
   return {
     ...(v as Venue),
     weeks: (v.weeks as unknown[]).map(normalizeWeek),
+    policy: normalizePolicy(v as { policy?: unknown; positions?: unknown; config?: unknown }),
     members: Array.isArray(v.members) ? v.members : [],
   };
 }
@@ -552,7 +588,9 @@ function normalizeWeek(raw: unknown): Week {
     advances?: Record<string, string>;
     carried?: Record<string, string>;
   };
-  if (Array.isArray(week.advanceEntries)) return week;
+  // Semanas guardadas antes de las versiones: la única política que existía es la versión 1.
+  if (Array.isArray(week.advanceEntries))
+    return { ...week, policyVersion: week.policyVersion ?? 1 };
 
   const { advances = {}, carried = {}, ...rest } = week;
   // Mediodía UTC: en Argentina sigue siendo el mismo día (medianoche UTC se vería como el día anterior).
@@ -587,5 +625,10 @@ function normalizeWeek(raw: unknown): Week {
       });
     }
   }
-  return { ...rest, advanceEntries, revision: week.revision ?? 1 };
+  return {
+    ...rest,
+    advanceEntries,
+    revision: week.revision ?? 1,
+    policyVersion: week.policyVersion ?? 1,
+  };
 }

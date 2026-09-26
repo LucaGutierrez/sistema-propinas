@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { Member, Outcome, Venue } from './model';
 import { effectivePermissions } from './permissions';
+import { currentVersion } from './policy';
 import {
   activeVenue,
   applyToActiveVenue,
@@ -83,7 +84,10 @@ export function useDemoStore() {
   /** Miembro simulado con "Ver como…", o null si se ve como el encargado. */
   const viewAs: Member | null =
     venue?.members.find((m) => m.id === workspace?.viewAsMemberId) ?? null;
-  const perms = effectivePermissions(viewAs);
+  const perms = effectivePermissions(
+    viewAs,
+    venue ? currentVersion(venue.policy).values : undefined,
+  );
 
   const applyWorkspace = useCallback(
     (action: (workspace: Workspace) => WorkspaceOutcome): string | null => {

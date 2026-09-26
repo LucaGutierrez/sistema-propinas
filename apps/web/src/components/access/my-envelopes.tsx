@@ -16,6 +16,7 @@ import {
   advanceTotal,
   openWeek,
   positionById,
+  positionsOf,
   sortedWeeks,
   type Week,
 } from '@/lib/demo-store/model';
@@ -72,7 +73,7 @@ export function MyEnvelopes() {
             {venue.name}
             <PositionBadge
               name={position?.name ?? ''}
-              tone={toneOf(venue.positions, member.positionId)}
+              tone={toneOf(positionsOf(venue), member.positionId)}
             />
           </span>
         }

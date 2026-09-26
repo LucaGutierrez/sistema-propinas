@@ -2,12 +2,14 @@
 
 Aplicación web para gestionar y distribuir propinas entre el personal de restaurantes, reemplazando las planillas de Excel.
 
-Estado: **Fase 0 implementada** (motor de cálculo, tests, esquema Prisma, SQL de restricciones, CI); pendiente de revisión antes de la Fase 1. Revisión 5.
+Estado: **Fase 0 implementada** (motor de cálculo, tests, esquema Prisma, SQL de restricciones, CI). **Fase 1 en curso** como demo en el navegador (ver `PROGRESS.md` §6.2). Revisión 6: principio de configuración de distribución por restaurante (§2, principio 7, y §2.1).
 El esquema completo está en [`DATABASE.md`](DATABASE.md); este documento explica arquitectura, flujo y decisiones.
 
 ---
 
 ## 1. El flujo real del negocio (base de todo el diseño)
+
+> **Nota (2026-09-26):** cuándo se calcula (por día o por período), qué horas se usan y cada cuánto se paga **no son reglas del sistema sino configuración de cada restaurante** (§2, principio 7, y §2.1). El flujo de abajo es el modelo de la Fase 0; se mantiene como uno de los modos posibles.
 
 La propina **se calcula por día** pero **se paga por semana**. Son tres conceptos distintos, y ninguno reemplaza a otro:
 
@@ -55,6 +57,44 @@ Todo queda en `weekly_payment_events` (bitácora inmutable) y en `audit_log`: qu
 4. **Multi-restaurante desde el día 1** (`restaurant_id` en todo).
 5. **Roles previstos, no implementados.** El modelo tiene membresías con rol; el MVP opera con `OWNER` pero el código ya consulta permisos.
 6. **Simple y gratuita de operar.** Un repositorio, un despliegue, servicios con capa gratuita.
+7. **Cada restaurante configura cómo reparte sus propinas** (2026-09-26). GUTIP no se diseña alrededor de la planilla de un restaurante: tiene **reglas estructurales** (iguales para todos, no negociables) y **parámetros de distribución** que elige cada restaurante. La configuración de un restaurante solo afecta a ese restaurante, y cada cierre guarda la configuración con la que se calculó, así que cambiarla nunca altera el historial. **Library (Hotel Faena)** es el caso de referencia: GUTIP tiene que poder reproducirlo exactamente, pero Library es *una configuración*, no el producto. Lo que todavía no sabemos de un restaurante queda como **configuración pendiente**, nunca como una regla inventada.
+
+### 2.1 Reglas estructurales vs. parámetros configurables
+
+**Estructurales** (el sistema las garantiza para todos los restaurantes):
+
+| Regla | Por qué no se configura |
+|---|---|
+| Dinero exacto en enteros (centavos), sin floats | Evita errores de redondeo invisibles |
+| El reparto suma **exactamente** el pozo; si la unidad de redondeo deja un sobrante, su destino es explícito | Nunca aparece ni desaparece plata |
+| Un cierre es inmutable; se corrige anulando (con motivo) y rehaciendo; todo queda auditado | Confianza y trazabilidad |
+| Cada cierre guarda un **snapshot** de datos y de la configuración usada | Cambiar la configuración no reescribe el pasado |
+| Un sobre nunca es negativo | Protege al empleado |
+| Adelantos y sobres no se borran: se anulan / revierten con motivo, quién y cuándo | Auditoría |
+| Aislamiento total entre restaurantes (datos y configuración) | Multi-restaurante |
+| Mismo cálculo para vista previa y cierre (motor puro y determinista) | Lo que se ve es lo que se paga |
+| USD: la cotización usada se copia al registro | Historial estable |
+| Permisos por restaurante y por persona, verificados en el servidor | Seguridad |
+
+**Configurables por restaurante** (parámetros de distribución; entre paréntesis, lo que sabemos de Library):
+
+| Parámetro | Opciones posibles | Library |
+|---|---|---|
+| Período de liquidación / pago | semanal, quincenal, mensual (+ día de inicio) | Semanal — *confirmado* |
+| Cuándo se reparte | una vez por período con el pozo acumulado · cada día | Una vez por semana — *confirmado* |
+| Qué horas se usan | total del período · del día · acumuladas hasta la fecha | Total de la semana — *confirmado* |
+| Cómo se cargan las horas | total al cerrar · por día | Total al cerrar — *confirmado* |
+| Fuentes del pozo | efectivo, tarjeta, recepción, cocina… (sumadas o separadas) | Efectivo; Recepción y Cocina — *pendiente* |
+| Grupos y porcentajes | sin grupos · % por grupo (+ qué pasa si un grupo no trabajó) | Sin grupos según la planilla — *sin confirmar* |
+| Peso de cada hora | por puesto · por puesto con excepción por persona · por persona; escala del valor | Por puesto con excepciones en Bacha según la planilla — *sin confirmar* |
+| Redondeo | centavo · peso · $10 · $100; destino del sobrante | Pesos enteros según la planilla — *sin confirmar* |
+| Descuento de adelantos | todo el período · desde su fecha · a elección / en cuotas | *pendiente* |
+| Adelanto que no alcanza a descontarse | pasa como saldo al período siguiente · otras políticas a definir con casos reales | Pasa al período siguiente (decisión de la Fase 0) — *pendiente de confirmar*; **no es regla estructural** (2026-09-26) |
+| Quién prepara y entrega sobres | solo Encargado · Encargado y Editor · rol "Pagador" | *pendiente* |
+
+**Combinaciones que dependen entre sí:** "desde su fecha" en adelantos solo tiene sentido si se reparte por día; horas "del día" exigen cargar horas por día; un % por grupo exige definir grupos y la política para un grupo vacío. La configuración valida estas combinaciones.
+
+**Modelo detallado:** [`CONFIG-MODEL.md`](CONFIG-MODEL.md) (aprobado 2026-09-26): política versionada por restaurante que arranca con la configuración estándar de GUTIP; cada período se fija a una versión y cada cierre guarda la versión y una copia de los valores. Todavía sin tablas Prisma.
 
 ---
 

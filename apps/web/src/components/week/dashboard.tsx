@@ -21,7 +21,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatMonth, formatWeekRange, todayIso } from '@/lib/dates';
 import { formatMoneyShort } from '@/lib/decimal';
-import { monthlySummary, openWeek, sortedWeeks, weekTotal } from '@/lib/demo-store/model';
+import {
+  monthlySummary,
+  openWeek,
+  positionsOf,
+  sortedWeeks,
+  weekTotal,
+} from '@/lib/demo-store/model';
 import { useDemoStore } from '@/lib/demo-store/store';
 import { envelopeSummary } from '@/lib/demo-store/envelopes';
 import type { Week } from '@/lib/demo-store/model';
@@ -83,7 +89,7 @@ export function Dashboard() {
         <StatCard
           label="Personal activo"
           value={activeStaff}
-          hint={`${venue.positions.length} puestos`}
+          hint={`${positionsOf(venue).length} puestos`}
           icon={UsersIcon}
         />
       </div>
