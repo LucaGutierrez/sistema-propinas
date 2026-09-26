@@ -1,4 +1,4 @@
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ID,
   advance,
@@ -16,27 +16,6 @@ const db = useDatabase();
 const D1 = uuid(100); // distribución DRAFT reutilizada por varios tests
 
 describe('CHECK: restaurante, catálogos y cotizaciones', () => {
-  it.each([0, 8, -1])('week_starts_on = %i es inválido', async (day) => {
-    await db.fails(
-      `INSERT INTO restaurants (name, week_starts_on, pool_mode, updated_at) VALUES ('X', ${day}, 'SINGLE', now());`,
-      /ck_restaurants_week_starts_on/,
-    );
-  });
-
-  it.each([1, 4, 7])('week_starts_on = %i es válido', async (day) => {
-    await db.exec(
-      `INSERT INTO restaurants (name, week_starts_on, pool_mode, updated_at) VALUES ('X', ${day}, 'PER_TEAM', now());`,
-    );
-  });
-
-  it.each(['0', '-1.00'])('el peso de un puesto (%s) debe ser > 0', async (weight) => {
-    await db.fails(
-      `INSERT INTO positions (restaurant_id, team_id, name, weight, updated_at)
-       VALUES ('${ID.R1}', '${ID.T1}', 'Peso malo', ${weight}, now());`,
-      /ck_positions_weight_positive/,
-    );
-  });
-
   it.each(['0', '-1180'])('la cotización (%s) debe ser > 0', async (rate) => {
     await db.fails(
       `INSERT INTO exchange_rates (restaurant_id, date, rate, created_by, updated_at)
@@ -54,23 +33,23 @@ describe('CHECK: restaurante, catálogos y cotizaciones', () => {
 });
 
 describe('CHECK: distribución diaria', () => {
-  it('SINGLE no puede tener equipo', async () => {
+  it('un reparto DAY cubre un solo día', async () => {
     await db.fails(
-      dist(D1, '2026-09-21', { mode: 'SINGLE', team: ID.T1 }),
-      /ck_daily_distributions_pool_team/,
+      dist(D1, '2026-09-21', { scope: 'DAY', to: '2026-09-22' }),
+      /ck_daily_distributions_scope_range/,
     );
   });
 
-  it('PER_TEAM exige equipo', async () => {
+  it('un reparto PERIOD no puede terminar antes de empezar', async () => {
     await db.fails(
-      dist(D1, '2026-09-21', { mode: 'PER_TEAM', team: null }),
-      /ck_daily_distributions_pool_team/,
+      dist(D1, '2026-09-27', { scope: 'PERIOD', to: '2026-09-21' }),
+      /ck_daily_distributions_scope_range/,
     );
   });
 
-  it('SINGLE sin equipo y PER_TEAM con equipo son válidos', async () => {
+  it('DAY de un día y PERIOD de varios días son válidos', async () => {
     await db.exec(dist(D1, '2026-09-21'));
-    await db.exec(dist(uuid(101), '2026-09-22', { mode: 'PER_TEAM', team: ID.T1 }));
+    await db.exec(dist(uuid(101), '2026-09-28', { scope: 'PERIOD', to: '2026-10-04' }));
   });
 
   it('los totales no pueden ser negativos', async () => {
@@ -111,8 +90,8 @@ describe('CHECK: distribución diaria', () => {
   it('solo una distribución CLOSED puede pertenecer a una liquidación', async () => {
     await db.exec(
       dist(D1, '2026-09-21') +
-        `INSERT INTO weekly_settlements (id, restaurant_id, week_start, week_end, created_by, updated_at)
-         VALUES ('${uuid(300)}', '${ID.R1}', '2026-09-21', '2026-09-27', '${ID.U1}', now());`,
+        `INSERT INTO weekly_settlements (id, restaurant_id, week_start, week_end, policy_version_id, created_by, updated_at)
+         VALUES ('${uuid(300)}', '${ID.R1}', '2026-09-21', '2026-09-27', '${ID.V1}', '${ID.U1}', now());`,
     );
     await db.fails(
       `UPDATE daily_distributions SET settlement_id = '${uuid(300)}' WHERE id = '${D1}';`,
@@ -158,13 +137,26 @@ describe('CHECK: propinas (tip_entries)', () => {
 });
 
 describe('CHECK: ítems de la distribución diaria', () => {
-  it.each(['0', '-1', '24.01', '25'])(
-    'las horas (%s) deben estar entre 0 (exclusivo) y 24',
-    async (hours) => {
-      await db.exec(dist(D1, '2026-09-21'));
-      await db.fails(item(uuid(1), D1, ID.E1, { hours }), /ck_ddi_hours/);
-    },
-  );
+  it.each(['0', '-1'])('las horas (%s) deben ser > 0', async (hours) => {
+    await db.exec(dist(D1, '2026-09-21'));
+    await db.fails(item(uuid(1), D1, ID.E1, { hours }), /ck_ddi_hours_positive/);
+  });
+
+  it.each(['24.01', '25'])('las horas (%s) no superan las 24 de un reparto DAY', async (hours) => {
+    await db.exec(dist(D1, '2026-09-21'));
+    await db.fails(item(uuid(1), D1, ID.E1, { hours }), /exceed the length of the distribution/);
+  });
+
+  it('en un reparto PERIOD el tope es 24 × días del período', async () => {
+    await db.exec(dist(D1, '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }));
+    await db.exec(
+      item(uuid(1), D1, ID.E1, { hours: '168' }) + item(uuid(2), D1, ID.E2, { hours: '48' }),
+    );
+    await db.fails(
+      item(uuid(3), D1, ID.E3, { hours: '168.01' }),
+      /exceed the length of the distribution/,
+    );
+  });
 
   it('acepta exactamente 24 horas y horas decimales', async () => {
     await db.exec(
@@ -174,9 +166,9 @@ describe('CHECK: ítems de la distribución diaria', () => {
     );
   });
 
-  it.each(['0', '-1'])('el peso del ítem (%s) debe ser > 0', async (weight) => {
+  it.each(['0', '-1'])('la porción del ítem (%s) debe ser > 0', async (portion) => {
     await db.exec(dist(D1, '2026-09-21'));
-    await db.fails(item(uuid(1), D1, ID.E1, { weight }), /ck_ddi_weight/);
+    await db.fails(item(uuid(1), D1, ID.E1, { portion }), /ck_ddi_portion/);
   });
 
   it('el porcentaje debe estar entre 0 y 1', async () => {
@@ -242,14 +234,12 @@ describe('unicidad', () => {
     );
   });
 
-  it('nombre de puesto único por equipo, pero repetible en otro equipo', async () => {
-    await db.fails(
-      `INSERT INTO positions (restaurant_id, team_id, name, weight, updated_at) VALUES ('${ID.R1}', '${ID.T1}', 'Mozo', 1, now());`,
-      /positions_team_id_name_key/,
-    );
-    await db.exec(
-      `INSERT INTO positions (restaurant_id, team_id, name, weight, updated_at) VALUES ('${ID.R1}', '${ID.T2}', 'Mozo', 1, now());`,
-    );
+  it('nombre de puesto único por restaurante (sin distinguir mayúsculas), con o sin equipo', async () => {
+    const insert = (team: string, name: string) =>
+      `INSERT INTO positions (restaurant_id, team_id, name, updated_at) VALUES ('${ID.R1}', ${team}, '${name}', now());`;
+    await db.fails(insert(`'${ID.T2}'`, 'Mozo'), /ux_positions_restaurant_name/);
+    await db.fails(insert('NULL', 'MOZO'), /ux_positions_restaurant_name/);
+    await db.exec(insert('NULL', 'Runner'));
   });
 
   it('una membresía por usuario y restaurante', async () => {
@@ -271,19 +261,33 @@ describe('unicidad', () => {
   });
 });
 
-describe('índice único parcial: una distribución vigente por día y pozo', () => {
-  it('rechaza dos distribuciones SINGLE vigentes el mismo día', async () => {
+describe('repartos vigentes sin superposición (trigger + índice único parcial)', () => {
+  const overlap = /distributions of a restaurant cannot overlap/;
+
+  it('rechaza dos repartos vigentes el mismo día', async () => {
     await db.exec(dist(D1, '2026-09-21'));
-    await db.fails(dist(uuid(101), '2026-09-21'), /ux_daily_distributions_active/);
+    await db.fails(dist(uuid(101), '2026-09-21'), overlap);
   });
 
-  it('rechaza dos pozos del mismo equipo el mismo día, pero acepta equipos distintos', async () => {
-    await db.exec(dist(D1, '2026-09-21', { mode: 'PER_TEAM', team: ID.T1 }));
-    await db.fails(
-      dist(uuid(101), '2026-09-21', { mode: 'PER_TEAM', team: ID.T1 }),
-      /ux_daily_distributions_active/,
+  it('rechaza un reparto de período que pisa un reparto de día, en cualquier orden', async () => {
+    await db.exec(dist(D1, '2026-09-23'));
+    await db.fails(dist(uuid(101), '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }), overlap);
+    await db.exec(dist(uuid(102), '2026-09-28', { scope: 'PERIOD', to: '2026-10-04' }));
+    await db.fails(dist(uuid(103), '2026-10-04'), overlap);
+  });
+
+  it('períodos contiguos no se superponen', async () => {
+    await db.exec(
+      dist(D1, '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }) +
+        dist(uuid(101), '2026-09-28', { scope: 'PERIOD', to: '2026-10-04' }),
     );
-    await db.exec(dist(uuid(102), '2026-09-21', { mode: 'PER_TEAM', team: ID.T2 }));
+  });
+
+  it('el índice único ux_daily_distributions_active respalda el trigger', async () => {
+    const [row] = await db.rows<{ def: string }>(
+      `SELECT indexdef AS def FROM pg_indexes WHERE indexname = 'ux_daily_distributions_active'`,
+    );
+    expect(row?.def).toMatch(/\(restaurant_id, date_from\) WHERE \(status <> 'VOIDED'/);
   });
 
   it('una distribución anulada libera el día para una nueva', async () => {
@@ -293,12 +297,12 @@ describe('índice único parcial: una distribución vigente por día y pozo', ()
     await db.exec(dist(uuid(110), '2026-09-21'));
   });
 
-  it('el mismo día en otro restaurante no choca (índice por restaurante)', async () => {
+  it('el mismo día en otro restaurante no choca (por restaurante)', async () => {
     await db.exec(
-      `INSERT INTO restaurants (id, name, pool_mode, updated_at) VALUES ('${uuid(11)}', 'Otro', 'SINGLE', now());` +
+      `INSERT INTO restaurants (id, name, updated_at) VALUES ('${uuid(11)}', 'Otro', now());` +
         dist(D1, '2026-09-21') +
-        `INSERT INTO daily_distributions (restaurant_id, date, pool_mode, created_by, updated_at)
-         VALUES ('${uuid(11)}', '2026-09-21', 'SINGLE', '${ID.U1}', now());`,
+        `INSERT INTO daily_distributions (restaurant_id, scope, date_from, date_to, created_by, updated_at)
+         VALUES ('${uuid(11)}', 'DAY', '2026-09-21', '2026-09-21', '${ID.U1}', now());`,
     );
   });
 });

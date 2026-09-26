@@ -126,6 +126,34 @@ describe('datos demo', () => {
     expect((leo?.amountCents ?? 0n) - (leo?.finalCents ?? 0n)).toBe(1_000_000n);
   });
 
+  it('con la porción de la base (10 decimales) los importes de Library no cambian', () => {
+    // La base guarda la porción como NUMERIC(20,10). El reparto es proporcional, así que la
+    // escala de la porción no altera los importes: 0,022 en E4 (220) o en E10 (220000000).
+    if (!demo.ok) throw new Error('demo inválida');
+    const E10_PER_E4 = 1_000_000n;
+    // El adelanto no interviene en el importe (solo en el final), así que acá no hace falta.
+    const rowsE10: ProvisionalRow[] = demo.result.items.map((item) => ({
+      id: item.id,
+      hoursE2: item.hoursE2,
+      factorE4: item.factorE4 * E10_PER_E4,
+      advanceCents: 0n,
+    }));
+    const e10 = computeProvisionalDistribution(demo.result.totalCents, rowsE10);
+    expect(e10.items.map((i) => i.amountCents)).toEqual(
+      demo.result.items.map((i) => i.amountCents),
+    );
+    expect(e10.items.map((i) => i.percentE2)).toEqual(demo.result.items.map((i) => i.percentE2));
+  });
+
+  it('10 decimales representan 0,65/45 (0,0144444444) y el reparto sigue sumando el pozo', () => {
+    const exact = computeProvisionalDistribution(34_799_000n, [
+      row('supervisor', 48n, 144_444_444n),
+      row('barra', 54n, 222_222_222n),
+      row('bacha', 40n, 66_666_667n),
+    ]);
+    expect(exact.items.reduce((sum, i) => sum + i.amountCents, 0n)).toBe(34_799_000n);
+  });
+
   it('cada empleado demo tiene un puesto conocido', () => {
     const ids = SEED_POSITIONS.map((p) => p.id);
     expect(SEED_STAFF.every((s) => ids.includes(s.positionId))).toBe(true);

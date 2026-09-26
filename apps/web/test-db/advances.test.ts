@@ -193,7 +193,32 @@ describe('adelantos: inmutabilidad (trigger fn_advances_guard)', () => {
      UPDATE advances SET applied_cents = 0, status = 'PENDING' WHERE id = '${ADVANCE}';` +
     voidDistribution(DIST, 'cargué mal las horas');
 
-  const voidAdvance = `UPDATE advances SET status = 'VOIDED' WHERE id = '${ADVANCE}';`;
+  const voidAdvance = `UPDATE advances SET status = 'VOIDED', voided_at = now(), voided_by = '${ID.U1}',
+      void_reason = 'cargado por error' WHERE id = '${ADVANCE}';`;
+
+  describe('datos de la anulación (ck_advances_voided)', () => {
+    it.each([
+      ['sin fecha', `voided_at = NULL, voided_by = '${ID.U1}', void_reason = 'cargado por error'`],
+      ['sin quién', `voided_at = now(), voided_by = NULL, void_reason = 'cargado por error'`],
+      ['sin motivo', `voided_at = now(), voided_by = '${ID.U1}', void_reason = NULL`],
+      ['con motivo corto', `voided_at = now(), voided_by = '${ID.U1}', void_reason = 'error'`],
+    ])('no se anula %s', async (_label, assignment) => {
+      await db.exec(advance(ADVANCE, { amount: 800 }));
+      await db.fails(
+        `UPDATE advances SET status = 'VOIDED', ${assignment} WHERE id = '${ADVANCE}';`,
+        /ck_advances_voided/,
+      );
+    });
+
+    it('un adelanto no anulado no lleva datos de anulación', async () => {
+      await db.exec(advance(ADVANCE, { amount: 800 }));
+      await db.fails(
+        `UPDATE advances SET voided_at = now(), voided_by = '${ID.U1}',
+           void_reason = 'cargado por error' WHERE id = '${ADVANCE}';`,
+        /ck_advances_void_data_only_when_voided/,
+      );
+    });
+  });
 
   describe('con aplicaciones vigentes', () => {
     it.each([

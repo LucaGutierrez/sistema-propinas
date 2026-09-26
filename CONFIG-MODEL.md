@@ -1,6 +1,6 @@
 # CONFIG-MODEL.md — Modelo de configuración de distribución
 
-Estado: **aprobado conceptualmente (2026-09-26)**. Implementado en la demo del navegador (`apps/web/src/lib/demo-store/`). **Todavía no hay tablas Prisma**: este documento es la base para diseñarlas.
+Estado: **aprobado conceptualmente (2026-09-26)**. Implementado en la demo del navegador (`apps/web/src/lib/demo-store/`). **Persistido en Prisma** (2026-09-26): tablas `distribution_policy_versions`, `policy_version_positions`, `period_policy_changes` y `period_hours` (ver `DATABASE.md` §4.2b); migración probada en local, todavía no aplicada en Neon.
 
 Relacionado: [`ARCHITECTURE.md`](ARCHITECTURE.md) §2 (principio 7) y §2.1 (reglas estructurales vs. configurables) · [`PROGRESS.md`](PROGRESS.md) §10.
 

@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. Sin cambios en Prisma, migraciones ni Neon desde la Fase 0).
+Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, probada en local; **no aplicada en Neon**).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
@@ -56,7 +56,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 - Flujo real: distribución diaria (cálculo) → liquidación semanal (acumulación) → sobre (pago).
 - Adelantos: se descuentan al cerrar cada distribución diaria; el excedente queda como saldo pendiente aplicable a futuras distribuciones (ejemplo: propina $30.000, adelanto $40.000 → día $0, saldo $10.000). **(2026-09-26)** Qué pasa con el excedente pasa a ser **configuración por restaurante, pendiente de confirmar con casos reales** (no regla estructural); lo estructural es que un sobre nunca es negativo. La demo solo implementa "pasa al período siguiente".
-- Pozo: mantener `team_id` opcional y soportar ambos modos; **no asumir una regla** hasta confirmarla con el negocio.
+- Pozo: ~~mantener `team_id` opcional y soportar ambos modos~~ **(2026-09-26)** la estructura del pozo es un parámetro de la política versionada (`pool_structure`; hoy solo `SINGLE_POOL`). `pool_mode` y `team_id` de la distribución se retiraron.
 - Correcciones tras entrega: reversión autorizada, con motivo obligatorio y auditoría; luego re-liquidación y nueva entrega.
 - Email: recuperación de contraseña **y** verificación de email desde el MVP (tabla `auth_tokens` + interfaz `Mailer`). El proveedor de producción se documenta antes de implementarlo.
 - Excel: los números de ejemplo de la conversación son solo ilustrativos, no casos de test. Los tests usan casos explícitos coherentes con la fórmula. El `.xlsx` real se agregará después en `reference/` como caso adicional.
@@ -102,7 +102,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 **Infraestructura**: ESLint con reglas que impiden `Number`, `Math`, `Date`, floats e imports externos en el motor; Prettier; `.gitattributes` (LF); `.gitignore` verificado (secretos, `.env*`, `reference/*` ignorados; `.env.example` versionado); `.github/workflows/ci.yml` con dos jobs: `check` (lint, typecheck, `test`, `test:db`, Prisma, motor sin dependencias) y `postgres` (`test:pg` sobre un contenedor **PostgreSQL 18**, misma versión mayor que Neon 18.6, para aproximar ese entorno; no se conecta a Neon).
 
-**Documentación**: `ARCHITECTURE.md` (rev. 5), `DATABASE.md` (rev. 5), `README.md`, este `PROGRESS.md`.
+**Documentación**: `ARCHITECTURE.md`, `DATABASE.md` (rev. 6 desde el 2026-09-26), `README.md`, este `PROGRESS.md`.
 
 **Verificado el 2026-09-25**: `lint`, `typecheck`, `test` (257 + 3 `todo`), `test:db` (206), `test:pg` (11, sobre PostgreSQL 16 local y temporal), `prisma validate`, `prisma generate` y `format:check` sin errores. `test:pg` se ejecutó **localmente** contra un PostgreSQL temporal, no en GitHub. El job `postgres` (PostgreSQL 18) fue agregado al CI pero **todavía no fue ejecutado por GitHub Actions**: el workflow solo corre con push a `main` o en un Pull Request, y el push de la rama no lo dispara.
 
@@ -130,7 +130,19 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 - Quién aparece como autor de una acción es "Encargado" o la persona simulada con "Ver como…".
 - Los datos demo usan los **nombres reales** de la planilla (`apps/web/src/lib/demo/data.ts`): anonimizar si el repositorio es público.
 
-**Verificado (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 79, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo), reglas, registro de adelantos (alta, anulación, conversión de datos viejos) y anular / reabrir una semana cerrada. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
+**Verificado (2026-09-26, antes de la persistencia):** `typecheck`, `lint`, `format:check`, `test` (web 79, tip-engine 257 + 3 `todo`), `test:db` (206) y `next build` sin errores. Probado en el navegador: flujo de semana, locales, "Ver como" (Editor y Solo lo suyo), sobres (preparar, entregar, revertir con motivo), reglas, registro de adelantos (alta, anulación, conversión de datos viejos) y anular / reabrir una semana cerrada. **No verificado visualmente en celular** (el diseño adaptable está hecho, pero el navegador de prueba no permitió achicar la ventana).
+
+### 6.3 Persistencia de la política versionada (Prisma, 2026-09-26)
+
+Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya implementado en la demo. Detalle en `DATABASE.md` rev. 6. **No toca Neon** ni `packages/tip-engine`; la demo sigue en `localStorage`.
+
+- **Tablas nuevas:** `distribution_policy_versions` (un parámetro por columna, enums con **solo** las opciones implementadas, `template_code`/`template_version` para la configuración estándar, que vive en el código; origen `STANDARD`/`COPY`/`CHANGE`; `period_start_weekday` configurable: lunes es el estándar, no una regla), `policy_version_positions` (porción `NUMERIC(20,10)` de cada puesto en la versión), `period_policy_changes` (bitácora automática o con motivo), `period_hours` (horas totales del período por empleado; tope 24 × días del período, sin límite de negocio inventado).
+- **Cambios:** `restaurants.current_policy_version_id` (sin `pool_mode` ni `week_starts_on`); `positions` como identidad estable (sin `weight`, `team_id` opcional, nombre único por restaurante sin distinguir mayúsculas; renombrar no crea versión); repartos `DAY`/`PERIOD` con `date_from`/`date_to` y sin superposición (reemplaza `date`, `pool_mode`, `team_id` y el trigger anti-mezcla; I13 pasa a "sin superposición"); `tip_entries.entry_date`; `portion_snapshot` y puntos `NUMERIC(30,12)`; datos de anulación en `advances`; `weekly_settlements.policy_version_id` + `policy_snapshot` (JSONB, solo auditoría) + `calc_version` obligatorios al cerrar.
+- **Reglas en la base:** versiones, sus puestos y la bitácora son de solo inserción; los puestos de una versión solo se insertan en la transacción que la crea; el período solo cambia de versión con su registro en la misma transacción, y solo estando `OPEN`; un período cerrado conserva versión y snapshot. Se mantienen I1–I12, revisiones con `supersedes` y el modelo de saldo pendiente de adelantos (sin filas artificiales de "Saldo anterior").
+- **Migración `20260926000000_distribution_policies`:** guarda "tablas de negocio vacías", DDL de Prisma y copia literal de `sql/0002_distribution_policies.sql`. `sql/constraints.sql` es el conjunto vigente que usan los tests; `0001_constraints.sql` no se tocó (ya está aplicado en Neon).
+- **Tests:** `test:db` **248** (nuevo `policies.test.ts`, tests de alcance, superposición, fecha de la propina, tope de horas, anulación de adelantos y la guarda de la migración); `test:pg` **18** (superposición bajo concurrencia, versiones simultáneas, marcas por transacción, cierre vs. cambio de versión, horas durante un cierre; `migrate diff` vacío). App: la porción de 10 decimales no cambia los importes de Library y representa 0,65/45. La fórmula provisional y el motor no cambiaron.
+- **Verificado localmente (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 82, tip-engine 257 + 3 `todo`), `test:db` (248), `test:pg` (18, sobre un PostgreSQL 18 local y descartable: `embedded-postgres` en una carpeta temporal, nunca Neon), `prisma validate`/`generate` y `next build`.
+- **Pendiente:** aplicar la migración en Neon (con autorización; primero en una rama de Neon, `migrate diff` sin drift); los servicios que escriben estas tablas (crear/cambiar política, abrir y cerrar período con snapshot) llegan con la persistencia real (§11).
 
 ## 7. Qué falta de la Fase 0
 
@@ -167,14 +179,14 @@ pnpm --filter @propinas/web build
 ## 9. Qué NO debemos hacer todavía
 
 - ~~No construir la interfaz ni instalar Next.js~~ (Fase 1 aprobada: la interfaz existe como demo).
-- No implementar login, registro, verificación de email ni recuperación de contraseña, ni tocar `schema.prisma`, hasta que el usuario apruebe el plan de Better Auth + persistencia (§11).
+- No implementar login, registro, verificación de email ni recuperación de contraseña hasta que el usuario apruebe el plan de Better Auth + persistencia (§11). El esquema de la política versionada ya está hecho (§6.3); otros cambios a `schema.prisma` requieren aprobación.
 - No convertir la fórmula provisional en regla definitiva ni cambiar el contrato del motor hasta resolver P1–P6 (§10).
 - No aplicar migraciones en Neon ni modificar esa base sin autorización explícita del usuario.
 - No modificar el motor de cálculo ni el esquema "por costumbre": cualquier cambio debe pasar `test`, `test:db` y actualizar `DATABASE.md`.
 - No usar `Number`, `Math`, `Date` ni floats en `packages/tip-engine` (ESLint y los tests lo impiden).
 - No convertir en tests los números de ejemplo de la conversación (Roro $516.447, etc.).
 - No versionar datos reales (Excel con sueldos, `.env`, credenciales).
-- No asumir la regla del pozo (único o por equipo). En Neon se verificó la **estructura** (objetos, checksum, sin drift), no el **comportamiento**: los triggers y la concurrencia se probaron en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
+- No agregar a los enums de la política opciones que GUTIP todavía no calcula. En Neon se verificó la **estructura** (objetos, checksum, sin drift), no el **comportamiento**: los triggers y la concurrencia se probaron en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
 - No correr `test:pg` apuntando a Neon ni a una base con datos (crea y borra bases).
 - No hacer `push` sin que el usuario lo pida, ni merge a `main` sin su aprobación.
 
@@ -186,7 +198,7 @@ pnpm --filter @propinas/web build
 | A2 | Auth.js vs Better Auth | **Decidido (2026-09-25): Better Auth.** Trae verificación de email y reset. Pendiente al empezar la Fase 1: conciliar sus tablas (`user`, `session`, `account`, `verification`) con `users` y `auth_tokens` del esquema actual, y actualizar `DATABASE.md`. |
 | A3 | Autorización de reversiones | Hoy es por rol (`OWNER`/`ADMIN` ejecutan y autorizan). Si se prefiere "solicitud + aprobación" de dos personas, el modelo ya separa `performed_by` y `authorized_by`. |
 | A4 | Verificación de la fórmula | **Parcialmente resuelto (2026-09-26).** Se analizó la foto de la planilla (`reference/`, ignorada por git): confirma el reparto proporcional a horas × factor y el descuento del adelanto. Diferencias con el motor: horas semanales (> 24), factores con más decimales y distintos dentro de un puesto, redondeo a pesos. Quedan P1–P7. |
-| D1 | Pozo del negocio real | **Reemplazado por P2** (porcentajes por grupo). |
+| D1 | Pozo del negocio real | **Reemplazado por P2** (porcentajes por grupo). En la base, `pool_structure` de la política (hoy `SINGLE_POOL`). |
 
 **Parámetros de distribución (P1–P8) — configuración por restaurante, no reglas globales** (2026-09-26). Cada restaurante elige su valor en "Configuración de distribución". La tabla dice qué opciones calcula GUTIP hoy y qué sabemos de Library (caso de referencia). Lo que no sabemos queda como configuración pendiente, nunca como regla inventada:
 
@@ -220,11 +232,11 @@ Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**)
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada (Neon migrado sin drift, CI en verde). La Fase 1 avanza como demo en el navegador; la persistencia real espera la aprobación del plan de §11 y las decisiones P1–P6.**
+**Cuando retomemos: la Fase 0 está cerrada (Neon con la migración inicial, CI en verde). La Fase 1 avanza como demo en el navegador; la política versionada ya tiene su esquema y migración probados en local (§6.3), sin aplicar en Neon.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 79 + tip-engine 257), `pnpm test:db` (206), `pnpm --filter @propinas/web build`.
+1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 82 + tip-engine 257), `pnpm test:db` (248), `pnpm test:pg` (18, PostgreSQL descartable), `pnpm --filter @propinas/web build`. Confirmar que el CI (job `postgres`) quedó en verde con la migración nueva.
 2. **Configuración de Library:** confirmar con el restaurante los parámetros pendientes (§10, pantalla "Configuración de distribución") y conseguir el `.xlsx` (P7). No son decisiones globales de GUTIP.
-3. **Diseño de datos (Prisma):** revisar primero la demo y [CONFIG-MODEL.md](CONFIG-MODEL.md); recién después diseñar las tablas de la política versionada, el período fijado a una versión y el snapshot del cierre (con aprobación explícita).
+3. ~~**Diseño de datos (Prisma)** de la política versionada~~ (hecho el 2026-09-26, §6.3). **Neon:** aplicar `20260926000000_distribution_policies` solo con autorización explícita.
 4. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
 5. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
 

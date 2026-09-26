@@ -50,11 +50,11 @@ describe('CLOSED: es inmutable', () => {
       immutable,
     );
     await db.fails(
-      `UPDATE daily_distributions SET date = '2026-09-25' WHERE id = '${DIST}';`,
+      `UPDATE daily_distributions SET date_from = '2026-09-25', date_to = '2026-09-25' WHERE id = '${DIST}';`,
       immutable,
     );
     await db.fails(
-      `UPDATE daily_distributions SET pool_mode = 'PER_TEAM', team_id = '${ID.T1}' WHERE id = '${DIST}';`,
+      `UPDATE daily_distributions SET scope = 'PERIOD', date_to = '2026-09-27' WHERE id = '${DIST}';`,
       immutable,
     );
     await db.fails(
@@ -206,28 +206,47 @@ describe('vínculo con la liquidación semanal', () => {
   });
 });
 
-describe('modo de pozo: un día no mezcla SINGLE y PER_TEAM', () => {
-  it('rechaza un pozo por equipo en un día con pozo único', async () => {
+describe('alcance DAY / PERIOD', () => {
+  it('una distribución anulada libera su rango para otra de otro alcance', async () => {
+    await db.exec(closedDay(100, '2026-09-21') + voidDistribution(DIST));
+    await db.exec(dist(uuid(200), '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }));
+  });
+
+  it('no se puede reactivar una distribución anulada cuyo rango ya ocupa otra', async () => {
+    await db.exec(
+      dist(DIST, '2026-09-21') +
+        voidDistribution(DIST) +
+        dist(uuid(200), '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }),
+    );
+    await db.fails(
+      `UPDATE daily_distributions SET status = 'DRAFT', voided_at = NULL, voided_by = NULL,
+         void_reason = NULL WHERE id = '${DIST}';`,
+      /IMMUTABLE|cannot overlap/,
+    );
+  });
+
+  it('cada propina lleva su fecha y cae dentro del rango del reparto', async () => {
+    await db.exec(dist(DIST, '2026-09-21', { scope: 'PERIOD', to: '2026-09-27' }));
+    // El pozo del período se anota por día (fecha de cada propina), no como filas sueltas.
+    await db.exec(
+      tip(uuid(201), DIST, 'ARS', 2000, null, 2000, '2026-09-21') +
+        tip(uuid(202), DIST, 'ARS', 3000, null, 3000, '2026-09-27'),
+    );
+    await db.fails(
+      tip(uuid(203), DIST, 'ARS', 1000, null, 1000, '2026-09-28'),
+      /a tip entry must be dated within its distribution/,
+    );
+    await db.fails(
+      `UPDATE tip_entries SET entry_date = '2026-09-20' WHERE id = '${uuid(201)}';`,
+      /a tip entry must be dated within its distribution/,
+    );
+  });
+
+  it('en un reparto DAY la propina es de ese día', async () => {
     await db.exec(dist(DIST, '2026-09-21'));
     await db.fails(
-      dist(uuid(200), '2026-09-21', { mode: 'PER_TEAM', team: ID.T1 }),
-      /a day cannot mix SINGLE and PER_TEAM/,
+      tip(uuid(201), DIST, 'ARS', 2000, null, 2000, '2026-09-22'),
+      /a tip entry must be dated within its distribution/,
     );
-  });
-
-  it('rechaza un pozo único en un día con pozos por equipo', async () => {
-    await db.exec(dist(DIST, '2026-09-21', { mode: 'PER_TEAM', team: ID.T1 }));
-    await db.fails(dist(uuid(200), '2026-09-21'), /a day cannot mix SINGLE and PER_TEAM/);
-  });
-
-  it('días distintos pueden usar modos distintos (cambio de modo hacia adelante)', async () => {
-    await db.exec(
-      dist(DIST, '2026-09-21') + dist(uuid(200), '2026-09-22', { mode: 'PER_TEAM', team: ID.T1 }),
-    );
-  });
-
-  it('una distribución anulada no cuenta para la mezcla de modos', async () => {
-    await db.exec(closedDay(100, '2026-09-21') + voidDistribution(DIST));
-    await db.exec(dist(uuid(200), '2026-09-21', { mode: 'PER_TEAM', team: ID.T1 }));
   });
 });

@@ -30,14 +30,13 @@ LOGIN → RESTAURANTE → EQUIPO → PERSONAL
 
 **Ejemplo ilustrativo (no se usa como caso de test):** Roro: Lun $63.747 · Mar $70.000 · Mié $58.200 · Jue $72.400 · Vie $91.300 · Sáb $84.600 · Dom $76.200 → total semanal $516.447. Bandeja de sobres: Roro → $516.447 · Leo → $623.450 · Marcos → $184.320 …
 
-### 1.1 Pozo único o pozo por equipo (sin regla asumida)
+### 1.1 Estructura del pozo (parámetro de la política)
 
-El negocio real todavía debe confirmar si existe **un pozo para todo el restaurante** o **un pozo independiente por equipo**. El diseño soporta ambos sin rehacer nada:
+Cómo se arma el pozo es un **parámetro de la política de distribución** de cada restaurante (`pool_structure`), no una columna suelta del restaurante ni de cada reparto. Hoy GUTIP implementa `SINGLE_POOL` (un pozo para todo el restaurante), que es lo que usa la configuración estándar. Otras estructuras (por ejemplo, un pozo por equipo o porcentajes por grupo) se agregan como opciones nuevas del parámetro cuando se implementen y se validen con casos reales.
 
-- `restaurants.pool_mode` = `SINGLE` | `PER_TEAM` (sin valor por defecto: se elige explícitamente al crear el restaurante).
-- `daily_distributions.team_id` es opcional: `NULL` en `SINGLE`; el equipo dueño del pozo en `PER_TEAM`. Cada distribución guarda su propio `pool_mode`.
-- **El motor de cálculo reparte un pozo y no sabe nada de equipos.** La capa de servicios decide cuántos pozos hay por día y a quién pertenece cada uno.
-- La liquidación semanal suma por empleado sin importar el modo. Cambiar de modo afecta solo a distribuciones futuras.
+- **El motor de cálculo reparte un pozo y no sabe nada de equipos.** La capa de servicios decide cuántos pozos hay según la versión de la política del período.
+- La liquidación suma por empleado. Cambiar la política crea una versión nueva y no altera los períodos cerrados.
+- Hasta la revisión 5 del modelo había `restaurants.pool_mode` (`SINGLE`/`PER_TEAM`) y `daily_distributions.team_id`; se retiraron en la revisión 6 (la base de Neon estaba vacía, así que no hubo datos que convertir).
 
 ### 1.2 Corrección de errores después de entregar un sobre
 
@@ -94,7 +93,7 @@ Todo queda en `weekly_payment_events` (bitácora inmutable) y en `audit_log`: qu
 
 **Combinaciones que dependen entre sí:** "desde su fecha" en adelantos solo tiene sentido si se reparte por día; horas "del día" exigen cargar horas por día; un % por grupo exige definir grupos y la política para un grupo vacío. La configuración valida estas combinaciones.
 
-**Modelo detallado:** [`CONFIG-MODEL.md`](CONFIG-MODEL.md) (aprobado 2026-09-26): política versionada por restaurante que arranca con la configuración estándar de GUTIP; cada período se fija a una versión y cada cierre guarda la versión y una copia de los valores. Todavía sin tablas Prisma.
+**Modelo detallado:** [`CONFIG-MODEL.md`](CONFIG-MODEL.md) (aprobado 2026-09-26): política versionada por restaurante que arranca con la configuración estándar de GUTIP; cada período se fija a una versión y cada cierre guarda la versión y una copia de los valores. **Persistencia** (2026-09-26, `DATABASE.md` rev. 6): `distribution_policy_versions` (un parámetro por columna, enums con solo las opciones implementadas), `policy_version_positions` (porción de cada puesto en la versión), `period_policy_changes` (bitácora de cambios de versión de un período) y `period_hours`. La configuración estándar vive en el código y cada versión que sale de ella registra `template_code`/`template_version`.
 
 ---
 
@@ -217,10 +216,11 @@ sistema-propinas/
 ## 6. Modelo de datos (resumen; detalle en `DATABASE.md`)
 
 - **Acceso:** `users`, `restaurants`, `memberships` (rol).
-- **Catálogos:** `teams`, `positions` (con **peso**), `employees`, `exchange_rates`.
-- **Distribución diaria:** `daily_distributions` (`DRAFT|CLOSED|VOIDED`, fecha, equipo, totales ARS/USD), `tip_entries` (ARS/USD + cotización usada), `daily_distribution_items` (empleado, puesto, peso, horas, puntos, %, bruto, adelantos, final; todo en *snapshot*).
-- **Adelantos:** `advances` (con saldo pendiente) + `advance_applications`.
-- **Liquidación semanal:** `weekly_settlements` (`OPEN|CLOSED|VOIDED`).
+- **Catálogos:** `teams`, `positions` (identidad estable del puesto; equipo opcional), `employees` (no versionados), `exchange_rates`.
+- **Política versionada:** `distribution_policy_versions` (parámetros tipados, solo inserción), `policy_version_positions` (porción de cada puesto, `NUMERIC(20,10)`); `restaurants.current_policy_version_id` es la vigente.
+- **Distribución:** `daily_distributions` (`DRAFT|CLOSED|VOIDED`, alcance `DAY` o `PERIOD` con `date_from`/`date_to`, sin superposición, totales ARS/USD), `tip_entries` (fecha de la propina, ARS/USD + cotización usada), `daily_distribution_items` (empleado, puesto, porción, horas, puntos, %, bruto, adelantos, final; todo en *snapshot*).
+- **Adelantos:** `advances` (con saldo pendiente y datos de anulación) + `advance_applications`.
+- **Liquidación (período):** `weekly_settlements` (`OPEN|CLOSED|VOIDED`, fijada a una versión de la política; al cerrar guarda `policy_snapshot` y `calc_version`), `period_policy_changes`, `period_hours`.
 - **Sobres:** `weekly_payments` (`PENDING|PREPARED|DELIVERED`, quién y cuándo entregó) + `weekly_payment_events` (historia inmutable de cada cambio, incluidas reversiones con motivo).
 - **Email/seguridad:** `auth_tokens` (verificación y recuperación), `rate_limits`.
 - **Auditoría:** `audit_log`.
@@ -416,8 +416,9 @@ Diseño responsive: los encargados cargan horas y entregan sobres desde el celul
 | Día sin distribución (local cerrado) | Simplemente no existe; la matriz lo muestra vacío |
 | Distribución `DRAFT` al cerrar la semana | Se bloquea el cierre y se listan los pendientes |
 | Fecha de una distribución dentro de una semana ya liquidada | Se rechaza hasta anular la liquidación |
-| Dos pozos el mismo día (por equipo) | Soportado (`PER_TEAM`, ver §1.1); la liquidación suma por empleado |
-| Cambio de `pool_mode` del restaurante | Solo afecta días futuros; se rechaza con distribuciones `DRAFT` o mezclando modos en la semana en curso |
+| Dos pozos el mismo día (por equipo) | Todavía no: la única estructura implementada es `SINGLE_POOL` (§1.1). Se agrega como opción del parámetro cuando se implemente |
+| Cambio de la política con un período abierto | Versión nueva vigente; el período abierto pasa a ella con registro automático y se recalcula. Un período reabierto conserva su versión salvo cambio explícito con motivo |
+| Cierre y cambio de política al mismo tiempo | El cierre bloquea el período antes de calcular: el cambio espera y se rechaza, o el cierre espera y usa la versión nueva (`test:pg`) |
 | Empleado que cambia de puesto durante el día | Un ítem por empleado por día: se carga con el puesto principal (limitación conocida; extensión posible) |
 | Cambio de peso de un puesto | Solo afecta días futuros (snapshot en los cerrados) |
 | Empleado dado de baja con historial | Archivado lógico, nunca borrado |
@@ -433,7 +434,7 @@ Diseño responsive: los encargados cargan horas y entregan sobres desde el celul
 ## 12. Decisiones
 
 **Resueltas**
-- **D1 — Pozo:** `team_id` opcional + `pool_mode` configurable (`SINGLE` | `PER_TEAM`); el motor no depende de la regla (§1.1). *Pendiente de negocio:* confirmar cuál usa el restaurante real; no bloquea nada.
+- **D1 — Pozo:** la estructura del pozo es un parámetro de la política versionada (`pool_structure`, hoy `SINGLE_POOL`); el motor no depende de la regla (§1.1). Reemplaza a `pool_mode` (revisión 6 del modelo).
 - **D2 — Adelantos:** se descuentan al cerrar cada distribución diaria; el excedente queda como saldo pendiente aplicable a futuras distribuciones.
 - **D3 — Excel:** tests con casos explícitos coherentes con la fórmula; el `.xlsx` real se agregará desde `reference/` cuando esté disponible.
 - **D4 — Correcciones tras entrega:** reversión autorizada, con motivo y auditoría → re-liquidación → nueva entrega (§1.2).

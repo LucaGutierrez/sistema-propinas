@@ -4,15 +4,17 @@ import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, inject, it } from 'vitest';
 
 /*
- * Los demás tests arman la base con el DDL de schema.prisma + sql/0001_constraints.sql.
- * A Neon llega otra cosa: prisma/migrations/. Estos tests garantizan que ambas son la misma base.
+ * Los demás tests arman la base con el DDL de schema.prisma + sql/constraints.sql (el conjunto
+ * vigente de restricciones). A Neon llega otra cosa: prisma/migrations/, donde cada migración
+ * embebe su delta de SQL (sql/0001_constraints.sql, sql/0002_distribution_policies.sql, ...).
+ * Estos tests garantizan que ambas son la misma base.
  */
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../prisma/migrations/', import.meta.url));
-const CONSTRAINTS_SQL = readFileSync(
-  fileURLToPath(new URL('../prisma/sql/0001_constraints.sql', import.meta.url)),
-  'utf8',
-);
+const sqlFile = (name: string): string =>
+  readFileSync(fileURLToPath(new URL(`../prisma/sql/${name}`, import.meta.url)), 'utf8');
+
+const CONSTRAINTS_SQL = sqlFile('constraints.sql');
 
 const migrationNames = (): string[] =>
   readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
@@ -63,7 +65,30 @@ describe('migraciones (prisma/migrations)', () => {
   it('la migración inicial termina con una copia literal de sql/0001_constraints.sql', () => {
     const [initial] = migrationNames();
     expect(initial).toMatch(/_init$/);
-    expect(migrationSql(initial ?? '').endsWith(CONSTRAINTS_SQL)).toBe(true);
+    expect(migrationSql(initial ?? '').endsWith(sqlFile('0001_constraints.sql'))).toBe(true);
+  });
+
+  it('la migración de políticas termina con una copia literal de sql/0002_distribution_policies.sql', () => {
+    const policies = migrationNames().find((name) => name.endsWith('_distribution_policies'));
+    expect(policies).toBeDefined();
+    expect(migrationSql(policies ?? '').endsWith(sqlFile('0002_distribution_policies.sql'))).toBe(
+      true,
+    );
+  });
+
+  it('la migración de políticas no se aplica sobre datos existentes (guarda explícita)', async () => {
+    const db = new PGlite();
+    try {
+      const [initial, policies] = migrationNames();
+      await db.exec(migrationSql(initial ?? ''));
+      await db.exec(
+        `INSERT INTO restaurants (id, name, pool_mode, updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000010', 'Demo', 'SINGLE', now());`,
+      );
+      await expect(db.exec(migrationSql(policies ?? ''))).rejects.toThrow(/MIGRATION GUARD/);
+    } finally {
+      await db.close();
+    }
   });
 
   it('aplicar las migraciones en orden produce exactamente la base que prueban los demás tests', async () => {

@@ -1,8 +1,39 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { type Session, advance, draftDay, errorOf, usePg } from './helpers';
+import {
+  type Fixture,
+  type Session,
+  advance,
+  draftDay,
+  errorOf,
+  insertPolicyVersion,
+  openSettlement,
+  usePg,
+} from './helpers';
 
 const pg = usePg();
+
+/** Registro de un cambio automático de versión: $1 restaurante, $2 período, $3 desde, $4 hacia, $5 usuario. */
+const logChange = `INSERT INTO period_policy_changes (restaurant_id, settlement_id, from_version_id,
+    to_version_id, automatic, performed_by)
+  VALUES ($1, $2, $3, $4, true, $5)`;
+
+/** Versión 2 de la política (con su puesto, en la misma transacción) y vigente. */
+async function newVersion(s: Session, f: Fixture): Promise<string> {
+  const id = randomUUID();
+  await s.query('BEGIN');
+  await s.query(insertPolicyVersion, [id, f.restaurant, 2, 'CHANGE', f.policyVersion, f.user]);
+  await s.query(
+    `INSERT INTO policy_version_positions (version_id, position_id, portion) VALUES ($1, $2, 0.0144444444)`,
+    [id, f.position],
+  );
+  await s.query(`UPDATE restaurants SET current_policy_version_id = $1 WHERE id = $2`, [
+    id,
+    f.restaurant,
+  ]);
+  await s.query('COMMIT');
+  return id;
+}
 
 /*
  * Paso 5 del cierre diario (DATABASE.md §6): tomar los adelantos PENDING del empleado con fecha
@@ -267,18 +298,18 @@ describe('cierre simultáneo de la misma distribución', () => {
 });
 
 describe('índices únicos bajo concurrencia', () => {
-  const insertDay = `INSERT INTO daily_distributions (id, restaurant_id, date, pool_mode, team_id, created_by, updated_at)
-    VALUES ($1, $2, '2026-09-22', $3, $4, $5, now())`;
+  const insertDay = `INSERT INTO daily_distributions (id, restaurant_id, scope, date_from, date_to, created_by, updated_at)
+    VALUES ($1, $2, $3::distribution_scope, '2026-09-22', $4, $5, now())`;
 
-  it('dos pozos únicos del mismo día creados a la vez: el segundo espera y falla', async () => {
+  it('dos repartos que empiezan el mismo día creados a la vez: el segundo espera y falla', async () => {
     const f = await pg.fixture();
     const t1 = await pg.connect();
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertDay, [randomUUID(), f.restaurant, 'SINGLE', null, f.user]);
+    await t1.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]);
     const second = errorOf(
-      t2.query(insertDay, [randomUUID(), f.restaurant, 'SINGLE', null, f.user]),
+      t2.query(insertDay, [randomUUID(), f.restaurant, 'PERIOD', '2026-09-28', f.user]),
     );
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('COMMIT');
@@ -291,9 +322,9 @@ describe('índices únicos bajo concurrencia', () => {
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertDay, [randomUUID(), f.restaurant, 'SINGLE', null, f.user]);
+    await t1.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]);
     const second = errorOf(
-      t2.query(insertDay, [randomUUID(), f.restaurant, 'SINGLE', null, f.user]),
+      t2.query(insertDay, [randomUUID(), f.restaurant, 'DAY', '2026-09-22', f.user]),
     );
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('ROLLBACK');
@@ -304,39 +335,235 @@ describe('índices únicos bajo concurrencia', () => {
   it('dos liquidaciones de la misma semana creadas a la vez: el segundo espera y falla', async () => {
     const f = await pg.fixture();
     // Revisiones distintas: así choca el índice de "una vigente por semana" y no el de revisión.
-    const insertWeek = `INSERT INTO weekly_settlements (id, restaurant_id, week_start, week_end, revision, created_by, updated_at)
-      VALUES ($1, $2, '2026-09-21', '2026-09-27', $4, $3, now())`;
     const t1 = await pg.connect();
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertWeek, [randomUUID(), f.restaurant, f.user, 1]);
-    const second = errorOf(t2.query(insertWeek, [randomUUID(), f.restaurant, f.user, 2]));
+    await openSettlement(t1, f, { revision: 1 });
+    const second = errorOf(openSettlement(t2, f, { revision: 2 }));
     await pg.waitUntilBlocked(t2.pid);
     await t1.query('COMMIT');
     expect(await second).toMatch(/ux_weekly_settlements_active/);
   });
+});
 
-  it('documenta el límite del trigger anti-mezcla: SINGLE y PER_TEAM simultáneos pasan los dos', async () => {
-    // El trigger trg_daily_distributions_no_mixed_modes no ve filas sin confirmar y los índices
-    // no chocan (team_id distinto). Por eso el servicio debe validar la mezcla dentro de su
-    // transacción, serializando por restaurante y día (DATABASE.md §10).
+describe('repartos superpuestos con distinto inicio (trigger fn_daily_distributions_no_overlap)', () => {
+  const insertDist = `INSERT INTO daily_distributions (id, restaurant_id, scope, date_from, date_to, created_by, updated_at)
+    VALUES ($1, $2, $3::distribution_scope, $4, $5, $6, now())`;
+  const lockRestaurant = `SELECT id FROM restaurants WHERE id = $1 FOR UPDATE`;
+
+  it('documenta el límite del trigger: sin serializar, un DAY y un PERIOD simultáneos pasan los dos', async () => {
+    // El trigger no ve filas sin confirmar y el índice no choca (date_from distinto). Por eso el
+    // servicio crea repartos serializando por restaurante (DATABASE.md §10).
     const f = await pg.fixture();
     const t1 = await pg.connect();
     const t2 = await pg.connect();
     await t1.query('BEGIN');
     await t2.query('BEGIN');
-    await t1.query(insertDay, [randomUUID(), f.restaurant, 'SINGLE', null, f.user]);
-    await t2.query(insertDay, [randomUUID(), f.restaurant, 'PER_TEAM', f.teams[0], f.user]);
+    await t1.query(insertDist, [
+      randomUUID(),
+      f.restaurant,
+      'DAY',
+      '2026-09-23',
+      '2026-09-23',
+      f.user,
+    ]);
+    await t2.query(insertDist, [
+      randomUUID(),
+      f.restaurant,
+      'PERIOD',
+      '2026-09-21',
+      '2026-09-27',
+      f.user,
+    ]);
     await t1.query('COMMIT');
     await t2.query('COMMIT');
 
     const setup = await pg.connect();
-    const modes = await setup.query<{ mode: string }>(
-      `SELECT pool_mode::text AS mode FROM daily_distributions
-       WHERE restaurant_id = $1 AND date = '2026-09-22' ORDER BY 1`,
+    const rows = await setup.query<{ scope: string }>(
+      `SELECT scope::text AS scope FROM daily_distributions WHERE restaurant_id = $1 ORDER BY 1`,
       [f.restaurant],
     );
-    expect(modes).toEqual([{ mode: 'PER_TEAM' }, { mode: 'SINGLE' }]);
+    expect(rows).toEqual([{ scope: 'DAY' }, { scope: 'PERIOD' }]);
+  });
+
+  it('serializando por restaurante (FOR UPDATE), el segundo espera y el trigger lo rechaza', async () => {
+    const f = await pg.fixture();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(lockRestaurant, [f.restaurant]);
+    await t1.query(insertDist, [
+      randomUUID(),
+      f.restaurant,
+      'DAY',
+      '2026-09-23',
+      '2026-09-23',
+      f.user,
+    ]);
+    const second = errorOf(
+      (async () => {
+        await t2.query(lockRestaurant, [f.restaurant]);
+        await t2.query(insertDist, [
+          randomUUID(),
+          f.restaurant,
+          'PERIOD',
+          '2026-09-21',
+          '2026-09-27',
+          f.user,
+        ]);
+      })(),
+    );
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    expect(await second).toMatch(/distributions of a restaurant cannot overlap/);
+  });
+});
+
+describe('política versionada bajo concurrencia', () => {
+  it('dos versiones nuevas con el mismo número a la vez: la segunda espera y falla', async () => {
+    const f = await pg.fixture();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    const change = (id: string) => [id, f.restaurant, 2, 'CHANGE', f.policyVersion, f.user];
+    await t1.query(insertPolicyVersion, change(randomUUID()));
+    const second = errorOf(t2.query(insertPolicyVersion, change(randomUUID())));
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    expect(await second).toMatch(/distribution_policy_versions_restaurant_id_number_key/);
+  });
+
+  it('los puestos de una versión solo se agregan en la transacción que la crea', async () => {
+    const f = await pg.fixture();
+    const version = randomUUID();
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t1.query(insertPolicyVersion, [
+      version,
+      f.restaurant,
+      2,
+      'CHANGE',
+      f.policyVersion,
+      f.user,
+    ]);
+    await t1.query('COMMIT');
+    expect(
+      await errorOf(
+        t2.query(
+          `INSERT INTO policy_version_positions (version_id, position_id, portion) VALUES ($1, $2, 0.03)`,
+          [version, f.position],
+        ),
+      ),
+    ).toMatch(/in the transaction that creates it/);
+  });
+
+  it('el registro de un cambio de versión no autoriza el cambio desde otra transacción', async () => {
+    const f = await pg.fixture();
+    const setup = await pg.connect();
+    const settlementId = await openSettlement(setup, f);
+    const v2 = await newVersion(setup, f);
+
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t1.query(logChange, [f.restaurant, settlementId, f.policyVersion, v2, f.user]);
+    await t1.query('COMMIT');
+    expect(
+      await errorOf(
+        t2.query(`UPDATE weekly_settlements SET policy_version_id = $1 WHERE id = $2`, [
+          v2,
+          settlementId,
+        ]),
+      ),
+    ).toMatch(/must be recorded in period_policy_changes/);
+  });
+});
+
+describe('cierre del período vs. cambio de versión de la política', () => {
+  const closePeriod = `UPDATE weekly_settlements SET status = 'CLOSED', closed_at = now(), closed_by = $2,
+      total_cents = 0, total_advances_cents = 0, total_final_cents = 0,
+      policy_snapshot = '{"roundingUnit":"CENT"}', calc_version = 'provisional-1'
+    WHERE id = $1`;
+  const repin = `UPDATE weekly_settlements SET policy_version_id = $1 WHERE id = $2`;
+
+  it('si el cierre va primero, el cambio de versión espera y después lo rechaza', async () => {
+    const f = await pg.fixture();
+    const setup = await pg.connect();
+    const settlementId = await openSettlement(setup, f);
+    const v2 = await newVersion(setup, f);
+
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(closePeriod, [settlementId, f.user]);
+    const second = errorOf(
+      (async () => {
+        await t2.query(logChange, [f.restaurant, settlementId, f.policyVersion, v2, f.user]);
+        await t2.query(repin, [v2, settlementId]);
+      })(),
+    );
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    expect(await second).toMatch(/only an OPEN period can change its policy version/);
+
+    const rows = await setup.query<{ status: string; version: string; changes: number }>(
+      `SELECT status::text AS status, policy_version_id AS version,
+              (SELECT count(*)::int FROM period_policy_changes WHERE settlement_id = $1) AS changes
+       FROM weekly_settlements WHERE id = $1`,
+      [settlementId],
+    );
+    expect(rows).toEqual([{ status: 'CLOSED', version: f.policyVersion, changes: 0 }]);
+  });
+
+  it('si el cambio de versión va primero, el cierre espera y cierra con la versión nueva', async () => {
+    const f = await pg.fixture();
+    const setup = await pg.connect();
+    const settlementId = await openSettlement(setup, f);
+    const v2 = await newVersion(setup, f);
+    const lockPeriod = `SELECT policy_version_id AS version FROM weekly_settlements WHERE id = $1 FOR UPDATE`;
+
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(logChange, [f.restaurant, settlementId, f.policyVersion, v2, f.user]);
+    await t1.query(repin, [v2, settlementId]);
+    // El cierre bloquea el período antes de calcular: así calcula con la versión confirmada.
+    const locked = t2.query<{ version: string }>(lockPeriod, [settlementId]);
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    expect(await locked).toEqual([{ version: v2 }]);
+    await t2.query(closePeriod, [settlementId, f.user]);
+    await t2.query('COMMIT');
+  });
+
+  it('horas cargadas mientras se cierra: el cierre espera; después las horas se rechazan', async () => {
+    const f = await pg.fixture();
+    const setup = await pg.connect();
+    const settlementId = await openSettlement(setup, f);
+    const insertHours = `INSERT INTO period_hours (restaurant_id, settlement_id, employee_id, hours, updated_by, updated_at)
+      VALUES ($1, $2, $3, $4, $5, now())`;
+
+    const t1 = await pg.connect();
+    const t2 = await pg.connect();
+    await t1.query('BEGIN');
+    await t2.query('BEGIN');
+    await t1.query(insertHours, [f.restaurant, settlementId, f.employees[0], 40, f.user]);
+    const closing = t2.query(closePeriod, [settlementId, f.user]);
+    await pg.waitUntilBlocked(t2.pid);
+    await t1.query('COMMIT');
+    await closing;
+    await t2.query('COMMIT');
+
+    expect(
+      await errorOf(
+        setup.query(insertHours, [f.restaurant, settlementId, f.employees[1], 8, f.user]),
+      ),
+    ).toMatch(/hours of a period can only change while it is OPEN/);
   });
 });

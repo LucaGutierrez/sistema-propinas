@@ -40,11 +40,97 @@ enum RateSource {
   @@map("rate_source")
 }
 
-enum TipPoolMode {
-  SINGLE
-  PER_TEAM
+// ─────────── Política de distribución (CONFIG-MODEL.md) ───────────
+// Cada enum tiene SOLO los valores que GUTIP implementa hoy. Una modalidad nueva agrega su
+// valor cuando exista su cálculo (no se anticipan valores).
 
-  @@map("tip_pool_mode")
+/// Período de liquidación.
+enum PeriodKind {
+  WEEKLY
+
+  @@map("period_kind")
+}
+
+/// Cuándo se reparte: una vez por período con el pozo acumulado.
+enum SplitTiming {
+  PER_PERIOD
+
+  @@map("split_timing")
+}
+
+/// Qué horas se usan: el total del período.
+enum HoursBasis {
+  PERIOD_TOTAL
+
+  @@map("hours_basis")
+}
+
+/// Cómo se cargan las horas: el total de cada persona al cerrar.
+enum HoursEntry {
+  PERIOD_TOTAL_AT_CLOSE
+
+  @@map("hours_entry")
+}
+
+/// Fuentes del pozo: un monto por día.
+enum PotSources {
+  SINGLE_DAILY_AMOUNT
+
+  @@map("pot_sources")
+}
+
+/// Estructura del pozo: pozo único (reemplaza a restaurants.pool_mode).
+enum PoolStructure {
+  SINGLE_POOL
+
+  @@map("pool_structure")
+}
+
+/// De qué depende la porción de cada hora: del puesto.
+enum PortionMode {
+  BY_POSITION
+
+  @@map("portion_mode")
+}
+
+/// Unidad del reparto (mayor resto en esa unidad).
+enum RoundingUnit {
+  CENT
+  PESO
+
+  @@map("rounding_unit")
+}
+
+/// De qué propina se descuentan los adelantos: de todo el período.
+enum AdvanceDeduction {
+  WHOLE_PERIOD
+
+  @@map("advance_deduction")
+}
+
+/// Quién prepara y entrega sobres (revertir una entrega es siempre del Encargado/Dueño).
+enum EnvelopeHandlers {
+  MANAGER_ONLY
+  MANAGER_AND_EDITOR
+
+  @@map("envelope_handlers")
+}
+
+/// Cómo nació una versión de la política.
+enum PolicyOrigin {
+  STANDARD
+  COPY
+  CHANGE
+
+  @@map("policy_origin")
+}
+
+/// Alcance de un reparto: un día o el período completo.
+enum DistributionScope {
+  DAY
+  PERIOD
+
+  @@map("distribution_scope")
 }
 
 enum DailyDistributionStatus {
@@ -112,18 +198,22 @@ model User {
 
   memberships               Membership[]
   authTokens                AuthToken[]
-  exchangeRatesCreated      ExchangeRate[]        @relation("ExchangeRateCreatedBy")
-  dailyDistributionsCreated DailyDistribution[]   @relation("DailyDistributionCreatedBy")
-  dailyDistributionsClosed  DailyDistribution[]   @relation("DailyDistributionClosedBy")
-  dailyDistributionsVoided  DailyDistribution[]   @relation("DailyDistributionVoidedBy")
-  advancesCreated           Advance[]             @relation("AdvanceCreatedBy")
-  settlementsCreated        WeeklySettlement[]    @relation("SettlementCreatedBy")
-  settlementsClosed         WeeklySettlement[]    @relation("SettlementClosedBy")
-  settlementsVoided         WeeklySettlement[]    @relation("SettlementVoidedBy")
-  paymentsPrepared          WeeklyPayment[]       @relation("PaymentPreparedBy")
-  paymentsDelivered         WeeklyPayment[]       @relation("PaymentDeliveredBy")
-  paymentEventsPerformed    WeeklyPaymentEvent[]  @relation("PaymentEventPerformedBy")
-  paymentEventsAuthorized   WeeklyPaymentEvent[]  @relation("PaymentEventAuthorizedBy")
+  exchangeRatesCreated      ExchangeRate[]              @relation("ExchangeRateCreatedBy")
+  dailyDistributionsCreated DailyDistribution[]         @relation("DailyDistributionCreatedBy")
+  dailyDistributionsClosed  DailyDistribution[]         @relation("DailyDistributionClosedBy")
+  dailyDistributionsVoided  DailyDistribution[]         @relation("DailyDistributionVoidedBy")
+  advancesCreated           Advance[]                   @relation("AdvanceCreatedBy")
+  advancesVoided            Advance[]                   @relation("AdvanceVoidedBy")
+  policyVersionsCreated     DistributionPolicyVersion[] @relation("PolicyVersionCreatedBy")
+  periodPolicyChanges       PeriodPolicyChange[]        @relation("PeriodPolicyChangePerformedBy")
+  periodHoursUpdated        PeriodHours[]               @relation("PeriodHoursUpdatedBy")
+  settlementsCreated        WeeklySettlement[]          @relation("SettlementCreatedBy")
+  settlementsClosed         WeeklySettlement[]          @relation("SettlementClosedBy")
+  settlementsVoided         WeeklySettlement[]          @relation("SettlementVoidedBy")
+  paymentsPrepared          WeeklyPayment[]             @relation("PaymentPreparedBy")
+  paymentsDelivered         WeeklyPayment[]             @relation("PaymentDeliveredBy")
+  paymentEventsPerformed    WeeklyPaymentEvent[]        @relation("PaymentEventPerformedBy")
+  paymentEventsAuthorized   WeeklyPaymentEvent[]        @relation("PaymentEventAuthorizedBy")
   auditLogs                 AuditLog[]
 
   @@map("users")
@@ -156,29 +246,33 @@ model RateLimit {
   @@map("rate_limits")
 }
 
+/// El día de inicio del período y la estructura del pozo viven en la política de distribución.
 model Restaurant {
-  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  timezone     String      @default("America/Argentina/Buenos_Aires")
-  /// 1 = lunes … 7 = domingo
-  weekStartsOn Int         @default(1) @map("week_starts_on") @db.SmallInt
-  /// Sin valor por defecto: se elige explícitamente al crear el restaurante.
-  poolMode     TipPoolMode @map("pool_mode")
-  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  archivedAt   DateTime?   @map("archived_at") @db.Timestamptz(6)
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  timezone               String    @default("America/Argentina/Buenos_Aires")
+  /// Versión vigente de la política (la que toman los períodos nuevos). Null solo mientras se crea el restaurante.
+  currentPolicyVersionId String?   @map("current_policy_version_id") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt             DateTime? @map("archived_at") @db.Timestamptz(6)
 
-  memberships          Membership[]
-  teams                Team[]
-  positions            Position[]
-  employees            Employee[]
-  exchangeRates        ExchangeRate[]
-  dailyDistributions   DailyDistribution[]
-  advances             Advance[]
-  weeklySettlements    WeeklySettlement[]
-  weeklyPayments       WeeklyPayment[]
-  weeklyPaymentEvents  WeeklyPaymentEvent[]
-  auditLogs            AuditLog[]
+  currentPolicyVersion DistributionPolicyVersion?  @relation("RestaurantCurrentPolicyVersion", fields: [currentPolicyVersionId], references: [id], onDelete: Restrict)
+  policyVersions       DistributionPolicyVersion[] @relation("RestaurantPolicyVersions")
+  periodPolicyChanges  PeriodPolicyChange[]
+  periodHours          PeriodHours[]
+
+  memberships         Membership[]
+  teams               Team[]
+  positions           Position[]
+  employees           Employee[]
+  exchangeRates       ExchangeRate[]
+  dailyDistributions  DailyDistribution[]
+  advances            Advance[]
+  weeklySettlements   WeeklySettlement[]
+  weeklyPayments      WeeklyPayment[]
+  weeklyPaymentEvents WeeklyPaymentEvent[]
+  auditLogs           AuditLog[]
 
   @@map("restaurants")
 }
@@ -208,31 +302,32 @@ model Team {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
 
-  restaurant         Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
-  positions          Position[]
-  dailyDistributions DailyDistribution[]
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  positions  Position[]
 
   @@unique([restaurantId, name])
   @@map("teams")
 }
 
+/// Identidad estable del puesto. Su porción (valor de cálculo por hora) vive en cada versión de la
+/// política (policy_version_positions). Renombrar un puesto no crea una versión.
+/// Nombre único por restaurante (sin distinguir mayúsculas): índice en sql/constraints.sql.
 model Position {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   restaurantId String    @map("restaurant_id") @db.Uuid
-  teamId       String    @map("team_id") @db.Uuid
+  /// Opcional mientras los equipos no sean una funcionalidad activa.
+  teamId       String?   @map("team_id") @db.Uuid
   name         String
-  /// Peso del puesto (> 0): puntos = horas × peso.
-  weight       Decimal   @db.Decimal(6, 2)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   archivedAt   DateTime? @map("archived_at") @db.Timestamptz(6)
 
-  restaurant       Restaurant              @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
-  team             Team                    @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  defaultForStaff  Employee[]              @relation("EmployeeDefaultPosition")
+  restaurant        Restaurant              @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  team              Team?                   @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  defaultForStaff   Employee[]              @relation("EmployeeDefaultPosition")
   distributionItems DailyDistributionItem[]
+  versionPortions   PolicyVersionPosition[]
 
-  @@unique([teamId, name])
   @@index([restaurantId])
   @@map("positions")
 }
@@ -254,6 +349,7 @@ model Employee {
   distributionItems DailyDistributionItem[]
   advances          Advance[]
   weeklyPayments    WeeklyPayment[]
+  periodHours       PeriodHours[]
 
   @@index([restaurantId, active])
   @@map("employees")
@@ -282,20 +378,20 @@ model ExchangeRate {
 
 // ─────────────── DAILY DISTRIBUTION (unidad de cálculo) ───────────────
 
-/// Un pozo de propinas de un día. `SINGLE`: team_id NULL (todo el restaurante).
-/// `PER_TEAM`: team_id = equipo dueño del pozo. Una vez CLOSED es inmutable (triggers).
+/// Un reparto de propinas. `DAY`: un día (date_from = date_to). `PERIOD`: el período completo
+/// (la política reparte una vez por período con el pozo acumulado; cada propina lleva su día).
+/// Una vez CLOSED es inmutable (triggers). Pertenece a la liquidación del período que la contiene.
 model DailyDistribution {
   id                 String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   restaurantId       String                  @map("restaurant_id") @db.Uuid
-  date               DateTime                @db.Date
-  poolMode           TipPoolMode             @map("pool_mode")
-  teamId             String?                 @map("team_id") @db.Uuid
-  teamNameSnapshot   String?                 @map("team_name_snapshot")
+  scope              DistributionScope
+  dateFrom           DateTime                @map("date_from") @db.Date
+  dateTo             DateTime                @map("date_to") @db.Date
   status             DailyDistributionStatus @default(DRAFT)
   tipsArsCents       BigInt                  @default(0) @map("tips_ars_cents")
   tipsUsdCents       BigInt                  @default(0) @map("tips_usd_cents")
   totalCents         BigInt                  @default(0) @map("total_cents")
-  totalPoints        Decimal                 @default(0) @map("total_points") @db.Decimal(12, 4)
+  totalPoints        Decimal                 @default(0) @map("total_points") @db.Decimal(30, 12)
   totalAdvancesCents BigInt                  @default(0) @map("total_advances_cents")
   totalFinalCents    BigInt                  @default(0) @map("total_final_cents")
   /// Se asigna al cerrar la liquidación semanal; con valor ≠ null la distribución no puede anularse.
@@ -310,36 +406,37 @@ model DailyDistribution {
   createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  restaurant Restaurant         @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
-  team       Team?              @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  settlement WeeklySettlement?  @relation(fields: [settlementId], references: [id], onDelete: Restrict)
-  createdBy  User               @relation("DailyDistributionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  closedBy   User?              @relation("DailyDistributionClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
-  voidedBy   User?              @relation("DailyDistributionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  restaurant Restaurant              @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  settlement WeeklySettlement?       @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  createdBy  User                    @relation("DailyDistributionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closedBy   User?                   @relation("DailyDistributionClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  voidedBy   User?                   @relation("DailyDistributionVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
   tipEntries TipEntry[]
   items      DailyDistributionItem[]
 
-  @@index([restaurantId, date])
+  @@index([restaurantId, dateFrom])
   @@index([settlementId])
   @@map("daily_distributions")
 }
 
 /// Propinas recibidas ese día, en su moneda original, con la cotización usada (copia).
 model TipEntry {
-  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  dailyDistributionId String       @map("daily_distribution_id") @db.Uuid
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dailyDistributionId String    @map("daily_distribution_id") @db.Uuid
+  /// Día en que se recibió (dentro del rango del reparto).
+  entryDate           DateTime  @map("entry_date") @db.Date
   currency            Currency
   /// Monto en la moneda original, en centavos.
-  amountCents         BigInt       @map("amount_cents")
+  amountCents         BigInt    @map("amount_cents")
   /// Cotización usada (obligatoria si USD). Es una copia: editar exchange_rates no la cambia.
-  exchangeRate        Decimal?     @map("exchange_rate") @db.Decimal(18, 6)
-  exchangeRateDate    DateTime?    @map("exchange_rate_date") @db.Date
-  exchangeRateId      String?      @map("exchange_rate_id") @db.Uuid
+  exchangeRate        Decimal?  @map("exchange_rate") @db.Decimal(18, 6)
+  exchangeRateDate    DateTime? @map("exchange_rate_date") @db.Date
+  exchangeRateId      String?   @map("exchange_rate_id") @db.Uuid
   /// Equivalente en ARS ya convertido.
-  amountArsCents      BigInt       @map("amount_ars_cents")
+  amountArsCents      BigInt    @map("amount_ars_cents")
   note                String?
-  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   dailyDistribution DailyDistribution @relation(fields: [dailyDistributionId], references: [id], onDelete: Restrict)
   exchangeRateRef   ExchangeRate?     @relation(fields: [exchangeRateId], references: [id], onDelete: Restrict)
@@ -350,29 +447,31 @@ model TipEntry {
 
 /// Una fila por empleado que trabajó ese día. Todo es snapshot al cerrar.
 model DailyDistributionItem {
-  id                   String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  dailyDistributionId  String  @map("daily_distribution_id") @db.Uuid
-  employeeId           String  @map("employee_id") @db.Uuid
-  positionId           String  @map("position_id") @db.Uuid
-  employeeNameSnapshot String  @map("employee_name_snapshot")
-  positionNameSnapshot String  @map("position_name_snapshot")
-  teamNameSnapshot     String  @map("team_name_snapshot")
-  weightSnapshot       Decimal @map("weight_snapshot") @db.Decimal(6, 2)
-  hours                Decimal @db.Decimal(6, 2)
-  /// horas × peso (exacto)
-  points               Decimal @db.Decimal(12, 4)
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dailyDistributionId  String   @map("daily_distribution_id") @db.Uuid
+  employeeId           String   @map("employee_id") @db.Uuid
+  positionId           String   @map("position_id") @db.Uuid
+  employeeNameSnapshot String   @map("employee_name_snapshot")
+  positionNameSnapshot String   @map("position_name_snapshot")
+  teamNameSnapshot     String?  @map("team_name_snapshot")
+  /// Porción por hora del puesto en la versión de la política usada (p. ej. 0,65 ÷ 45).
+  portionSnapshot      Decimal  @map("portion_snapshot") @db.Decimal(20, 10)
+  /// Horas del alcance del reparto (del día o del período).
+  hours                Decimal  @db.Decimal(6, 2)
+  /// horas × porción (exacto)
+  points               Decimal  @db.Decimal(30, 12)
   /// points / total_points (informativo; el monto no se deriva de este valor redondeado)
-  percentage           Decimal @db.Decimal(9, 6)
+  percentage           Decimal  @db.Decimal(9, 6)
   /// Importe bruto del día (método del mayor resto).
-  amountCents          BigInt  @map("amount_cents")
-  advancesCents        BigInt  @default(0) @map("advances_cents")
+  amountCents          BigInt   @map("amount_cents")
+  advancesCents        BigInt   @default(0) @map("advances_cents")
   /// Importe final del día = amount_cents − advances_cents.
-  finalCents           BigInt  @map("final_cents")
+  finalCents           BigInt   @map("final_cents")
   createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  dailyDistribution DailyDistribution   @relation(fields: [dailyDistributionId], references: [id], onDelete: Restrict)
-  employee          Employee            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  position          Position            @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  dailyDistribution   DailyDistribution    @relation(fields: [dailyDistributionId], references: [id], onDelete: Restrict)
+  employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  position            Position             @relation(fields: [positionId], references: [id], onDelete: Restrict)
   advanceApplications AdvanceApplication[]
 
   @@unique([dailyDistributionId, employeeId])
@@ -394,12 +493,17 @@ model Advance {
   status       AdvanceStatus @default(PENDING)
   note         String?
   createdById  String        @map("created_by") @db.Uuid
+  /// Anulación (VOIDED): quién, cuándo y por qué (motivo obligatorio).
+  voidedAt     DateTime?     @map("voided_at") @db.Timestamptz(6)
+  voidedById   String?       @map("voided_by") @db.Uuid
+  voidReason   String?       @map("void_reason")
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
   employee     Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   createdBy    User                 @relation("AdvanceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  voidedBy     User?                @relation("AdvanceVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
   applications AdvanceApplication[]
 
   @@index([restaurantId, employeeId, status])
@@ -424,7 +528,8 @@ model AdvanceApplication {
 
 // ───────────────── WEEKLY SETTLEMENT (acumulación) ─────────────────
 
-/// Acumula las distribuciones diarias CLOSED de una semana. No recalcula: suma.
+/// El PERÍODO: se abre (OPEN) fijado a una versión de la política y, al cerrar, acumula los
+/// repartos CLOSED del período (no recalcula: suma) y guarda el snapshot de la configuración usada.
 model WeeklySettlement {
   id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   restaurantId           String           @map("restaurant_id") @db.Uuid
@@ -434,6 +539,12 @@ model WeeklySettlement {
   revision               Int              @default(1)
   supersedesSettlementId String?          @unique @map("supersedes_settlement_id") @db.Uuid
   status                 SettlementStatus @default(OPEN)
+  /// Versión de la política fijada al abrir el período (congelada al cerrar).
+  policyVersionId        String           @map("policy_version_id") @db.Uuid
+  /// Copia de los valores de la política usados al cerrar (auditoría; el modelo tipado es la versión).
+  policySnapshot         Json?            @map("policy_snapshot")
+  /// Versión del cálculo que produjo el cierre.
+  calcVersion            String?          @map("calc_version")
   totalCents             BigInt?          @map("total_cents")
   totalAdvancesCents     BigInt?          @map("total_advances_cents")
   totalFinalCents        BigInt?          @map("total_final_cents")
@@ -447,14 +558,17 @@ model WeeklySettlement {
   createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  restaurant         Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
-  supersedes         WeeklySettlement?   @relation("SettlementSupersedes", fields: [supersedesSettlementId], references: [id], onDelete: Restrict)
-  supersededBy       WeeklySettlement?   @relation("SettlementSupersedes")
-  createdBy          User                @relation("SettlementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  closedBy           User?               @relation("SettlementClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
-  voidedBy           User?               @relation("SettlementVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  restaurant         Restaurant                @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  supersedes         WeeklySettlement?         @relation("SettlementSupersedes", fields: [supersedesSettlementId], references: [id], onDelete: Restrict)
+  supersededBy       WeeklySettlement?         @relation("SettlementSupersedes")
+  createdBy          User                      @relation("SettlementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closedBy           User?                     @relation("SettlementClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  voidedBy           User?                     @relation("SettlementVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  policyVersion      DistributionPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
   dailyDistributions DailyDistribution[]
   payments           WeeklyPayment[]
+  policyChanges      PeriodPolicyChange[]
+  hours              PeriodHours[]
 
   @@unique([restaurantId, weekStart, revision])
   @@index([restaurantId, status])
@@ -509,20 +623,20 @@ model WeeklyPayment {
 
 /// Bitácora inmutable (solo INSERT) de cada cambio de estado de un sobre.
 model WeeklyPaymentEvent {
-  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  restaurantId  String           @map("restaurant_id") @db.Uuid
-  paymentId     String           @map("payment_id") @db.Uuid
-  eventType     PaymentEventType @map("event_type")
-  fromStatus    PaymentStatus?   @map("from_status")
-  toStatus      PaymentStatus    @map("to_status")
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId   String           @map("restaurant_id") @db.Uuid
+  paymentId      String           @map("payment_id") @db.Uuid
+  eventType      PaymentEventType @map("event_type")
+  fromStatus     PaymentStatus?   @map("from_status")
+  toStatus       PaymentStatus    @map("to_status")
   /// Importe del sobre en ese momento.
-  amountCents   BigInt           @map("amount_cents")
-  performedById String           @map("performed_by") @db.Uuid
+  amountCents    BigInt           @map("amount_cents")
+  performedById  String           @map("performed_by") @db.Uuid
   /// Obligatorio en DELIVERY_REVERTED.
-  authorizedById String?         @map("authorized_by") @db.Uuid
+  authorizedById String?          @map("authorized_by") @db.Uuid
   /// Obligatorio (mín. 10 caracteres) en DELIVERY_REVERTED, VOIDED y PREPARATION_UNDONE.
-  reason        String?
-  occurredAt    DateTime         @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  reason         String?
+  occurredAt     DateTime         @default(now()) @map("occurred_at") @db.Timestamptz(6)
 
   restaurant   Restaurant    @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
   payment      WeeklyPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
@@ -531,6 +645,116 @@ model WeeklyPaymentEvent {
 
   @@index([paymentId, occurredAt])
   @@map("weekly_payment_events")
+}
+
+// ─────────── POLÍTICA DE DISTRIBUCIÓN versionada (CONFIG-MODEL.md) ───────────
+
+/// Una versión de la política de un restaurante. Nunca se edita ni se borra (trigger): cambiar la
+/// política crea una versión nueva. La configuración estándar vive en el código y queda registrada
+/// con template_code / template_version.
+model DistributionPolicyVersion {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId        String           @map("restaurant_id") @db.Uuid
+  /// 1, 2, 3… por restaurante.
+  number              Int
+  origin              PolicyOrigin
+  templateCode        String?          @map("template_code")
+  templateVersion     Int?             @map("template_version")
+  /// Versión anterior del mismo restaurante (cambios).
+  previousVersionId   String?          @map("previous_version_id") @db.Uuid
+  /// Versión de origen cuando es copia (puede ser de otro restaurante).
+  copiedFromVersionId String?          @map("copied_from_version_id") @db.Uuid
+  /// Qué cambió, generado por el servicio (p. ej. "Redondeo: Centavos → Pesos enteros").
+  summary             String
+  periodKind          PeriodKind       @map("period_kind")
+  /// 1 = lunes … 7 = domingo (ISO). El estándar es lunes; cada restaurante puede tener otro.
+  periodStartWeekday  Int              @map("period_start_weekday") @db.SmallInt
+  splitTiming         SplitTiming      @map("split_timing")
+  hoursBasis          HoursBasis       @map("hours_basis")
+  hoursEntry          HoursEntry       @map("hours_entry")
+  potSources          PotSources       @map("pot_sources")
+  poolStructure       PoolStructure    @map("pool_structure")
+  portionMode         PortionMode      @map("portion_mode")
+  roundingUnit        RoundingUnit     @map("rounding_unit")
+  advanceDeduction    AdvanceDeduction @map("advance_deduction")
+  envelopeHandlers    EnvelopeHandlers @map("envelope_handlers")
+  createdById         String           @map("created_by") @db.Uuid
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  restaurant      Restaurant                  @relation("RestaurantPolicyVersions", fields: [restaurantId], references: [id], onDelete: Restrict)
+  currentFor      Restaurant[]                @relation("RestaurantCurrentPolicyVersion")
+  previousVersion DistributionPolicyVersion?  @relation("PolicyVersionPrevious", fields: [previousVersionId], references: [id], onDelete: Restrict)
+  nextVersions    DistributionPolicyVersion[] @relation("PolicyVersionPrevious")
+  copiedFrom      DistributionPolicyVersion?  @relation("PolicyVersionCopiedFrom", fields: [copiedFromVersionId], references: [id], onDelete: Restrict)
+  copies          DistributionPolicyVersion[] @relation("PolicyVersionCopiedFrom")
+  createdBy       User                        @relation("PolicyVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  positions       PolicyVersionPosition[]
+  settlements     WeeklySettlement[]
+  changesFrom     PeriodPolicyChange[]        @relation("PolicyChangeFrom")
+  changesTo       PeriodPolicyChange[]        @relation("PolicyChangeTo")
+
+  @@unique([restaurantId, number])
+  @@map("distribution_policy_versions")
+}
+
+/// Los puestos de una versión con su porción por hora. Solo se insertan junto con su versión.
+model PolicyVersionPosition {
+  versionId  String  @map("version_id") @db.Uuid
+  positionId String  @map("position_id") @db.Uuid
+  /// Porción por hora (> 0). 10 decimales: representa 0,65 ÷ 45 y preserva los resultados de Library.
+  portion    Decimal @db.Decimal(20, 10)
+  sortOrder  Int     @default(0) @map("sort_order")
+
+  version  DistributionPolicyVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  position Position                  @relation(fields: [positionId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, positionId])
+  @@index([positionId])
+  @@map("policy_version_positions")
+}
+
+/// Bitácora (solo INSERT) de cambios de versión de un período abierto: automáticos (al cambiar la
+/// política) o elegidos a mano (motivo obligatorio).
+model PeriodPolicyChange {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId  String   @map("restaurant_id") @db.Uuid
+  settlementId  String   @map("settlement_id") @db.Uuid
+  fromVersionId String   @map("from_version_id") @db.Uuid
+  toVersionId   String   @map("to_version_id") @db.Uuid
+  automatic     Boolean
+  reason        String?
+  performedById String   @map("performed_by") @db.Uuid
+  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  restaurant  Restaurant                @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  settlement  WeeklySettlement          @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  fromVersion DistributionPolicyVersion @relation("PolicyChangeFrom", fields: [fromVersionId], references: [id], onDelete: Restrict)
+  toVersion   DistributionPolicyVersion @relation("PolicyChangeTo", fields: [toVersionId], references: [id], onDelete: Restrict)
+  performedBy User                      @relation("PeriodPolicyChangePerformedBy", fields: [performedById], references: [id], onDelete: Restrict)
+
+  @@index([settlementId, occurredAt])
+  @@map("period_policy_changes")
+}
+
+/// Horas de cada persona en el período (dato de entrada; editable solo con el período OPEN).
+model PeriodHours {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId String   @map("restaurant_id") @db.Uuid
+  settlementId String   @map("settlement_id") @db.Uuid
+  employeeId   String   @map("employee_id") @db.Uuid
+  /// Tope: 24 × días del período (trigger), no un límite de negocio.
+  hours        Decimal  @db.Decimal(6, 2)
+  updatedById  String   @map("updated_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  settlement WeeklySettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  updatedBy  User             @relation("PeriodHoursUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([settlementId, employeeId])
+  @@map("period_hours")
 }
 
 // ───────────────────────────── Auditoría ─────────────────────────────

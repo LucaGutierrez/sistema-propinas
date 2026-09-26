@@ -22,12 +22,14 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
   });
 
   it.each([
-    ['positions', 'weight', 6, 2],
-    ['daily_distribution_items', 'weight_snapshot', 6, 2],
+    // Porción con 10 decimales: representa 0,65/45 = 0,0144444444 sin perder los resultados de Library.
+    ['policy_version_positions', 'portion', 20, 10],
+    ['daily_distribution_items', 'portion_snapshot', 20, 10],
     ['daily_distribution_items', 'hours', 6, 2],
-    ['daily_distribution_items', 'points', 12, 4],
+    ['daily_distribution_items', 'points', 30, 12],
     ['daily_distribution_items', 'percentage', 9, 6],
-    ['daily_distributions', 'total_points', 12, 4],
+    ['daily_distributions', 'total_points', 30, 12],
+    ['period_hours', 'hours', 6, 2],
     ['exchange_rates', 'rate', 18, 6],
     ['tip_entries', 'exchange_rate', 18, 6],
   ])('%s.%s es NUMERIC(%i,%i) exacto', async (table, column, precision, scale) => {
@@ -47,7 +49,9 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
   });
 
   it.each([
-    ['daily_distributions', 'date'],
+    ['daily_distributions', 'date_from'],
+    ['daily_distributions', 'date_to'],
+    ['tip_entries', 'entry_date'],
     ['exchange_rates', 'date'],
     ['tip_entries', 'exchange_rate_date'],
     ['advances', 'date'],
@@ -63,16 +67,31 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
     expect(col?.data_type).toBe('date');
   });
 
-  it('restaurants.pool_mode es obligatorio y NO tiene valor por defecto', async () => {
-    const [col] = await db.rows<{ is_nullable: string; column_default: string | null }>(
-      `SELECT is_nullable, column_default FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'restaurants' AND column_name = 'pool_mode'`,
+  it('los parámetros de la política son obligatorios y sin valor por defecto en la base', async () => {
+    // La configuración estándar vive en el código (template_code/template_version), no en DEFAULTs.
+    const columns = await db.rows<{
+      column_name: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT column_name, is_nullable, column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'distribution_policy_versions'
+         AND column_name IN ('period_kind', 'period_start_weekday', 'split_timing', 'hours_basis',
+           'hours_entry', 'pot_sources', 'pool_structure', 'portion_mode', 'rounding_unit',
+           'advance_deduction', 'envelope_handlers')
+       ORDER BY column_name`,
     );
-    expect(col).toEqual({ is_nullable: 'NO', column_default: null });
-    await db.fails(
-      `INSERT INTO restaurants (id, name, updated_at) VALUES ('${uuid(900)}', 'Sin modo', now());`,
-      /null value in column "pool_mode"/,
+    expect(columns).toHaveLength(11);
+    expect(columns.filter((c) => c.is_nullable !== 'NO' || c.column_default !== null)).toEqual([]);
+  });
+
+  it('el restaurante ya no guarda parámetros de cálculo: están en la versión de la política', async () => {
+    const columns = await db.rows<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'restaurants'
+         AND column_name IN ('pool_mode', 'week_starts_on')`,
     );
+    expect(columns).toEqual([]);
   });
 
   it('las enumeraciones tienen exactamente los valores de DATABASE.md §2', async () => {
@@ -85,7 +104,12 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       advance_status: ['PENDING', 'APPLIED', 'VOIDED'],
       auth_token_type: ['EMAIL_VERIFICATION', 'PASSWORD_RESET'],
       currency: ['ARS', 'USD'],
+      advance_deduction: ['WHOLE_PERIOD'],
       daily_distribution_status: ['DRAFT', 'CLOSED', 'VOIDED'],
+      distribution_scope: ['DAY', 'PERIOD'],
+      envelope_handlers: ['MANAGER_ONLY', 'MANAGER_AND_EDITOR'],
+      hours_basis: ['PERIOD_TOTAL'],
+      hours_entry: ['PERIOD_TOTAL_AT_CLOSE'],
       membership_role: ['OWNER', 'ADMIN', 'MANAGER', 'VIEWER'],
       payment_event_type: [
         'CREATED',
@@ -96,9 +120,15 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
         'VOIDED',
       ],
       payment_status: ['PENDING', 'PREPARED', 'DELIVERED', 'VOIDED'],
+      period_kind: ['WEEKLY'],
+      policy_origin: ['STANDARD', 'COPY', 'CHANGE'],
+      pool_structure: ['SINGLE_POOL'],
+      portion_mode: ['BY_POSITION'],
+      pot_sources: ['SINGLE_DAILY_AMOUNT'],
       rate_source: ['MANUAL', 'API'],
+      rounding_unit: ['CENT', 'PESO'],
       settlement_status: ['OPEN', 'CLOSED', 'VOIDED'],
-      tip_pool_mode: ['SINGLE', 'PER_TEAM'],
+      split_timing: ['PER_PERIOD'],
     });
   });
 
@@ -114,12 +144,26 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       'trg_audit_log_no_truncate',
       'trg_daily_distribution_items_require_draft',
       'trg_daily_distributions_guard',
-      'trg_daily_distributions_no_mixed_modes',
+      'trg_daily_distributions_no_overlap',
+      'trg_ddi_hours_in_range',
+      'trg_period_hours_guard',
+      'trg_period_policy_changes_append_only',
+      'trg_period_policy_changes_before_insert',
+      'trg_period_policy_changes_no_truncate',
+      'trg_policy_version_positions_append_only',
+      'trg_policy_version_positions_before_insert',
+      'trg_policy_version_positions_no_truncate',
+      'trg_policy_versions_append_only',
+      'trg_policy_versions_before_insert',
+      'trg_policy_versions_no_truncate',
+      'trg_restaurants_current_policy',
+      'trg_tip_entries_in_range',
       'trg_tip_entries_require_draft',
       'trg_weekly_payment_events_append_only',
       'trg_weekly_payment_events_no_truncate',
       'trg_weekly_payments_guard',
       'trg_weekly_settlements_guard',
+      'trg_weekly_settlements_policy',
     ]);
   });
 
@@ -127,14 +171,16 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
     const rows = await db.rows<{ indexname: string; indexdef: string }>(
       `SELECT indexname, indexdef FROM pg_indexes
        WHERE schemaname = 'public'
-         AND indexname IN ('ux_daily_distributions_active', 'ux_weekly_settlements_active')
+         AND indexname IN ('ux_daily_distributions_active', 'ux_positions_restaurant_name',
+           'ux_weekly_settlements_active')
        ORDER BY indexname`,
     );
-    expect(rows).toHaveLength(2);
-    const [daily, weekly] = rows;
+    expect(rows).toHaveLength(3);
+    const [daily, positions, weekly] = rows;
     expect(daily?.indexdef).toMatch(/UNIQUE/);
-    expect(daily?.indexdef).toMatch(/COALESCE/);
     expect(daily?.indexdef).toMatch(/WHERE/);
+    expect(positions?.indexdef).toMatch(/UNIQUE/);
+    expect(positions?.indexdef).toMatch(/lower\(/);
     expect(weekly?.indexdef).toMatch(/UNIQUE/);
     expect(weekly?.indexdef).toMatch(/WHERE/);
   });
@@ -162,8 +208,8 @@ describe('relaciones (claves foráneas)', () => {
       /foreign key constraint/,
     );
     await db.fails(
-      `INSERT INTO daily_distributions (restaurant_id, date, pool_mode, created_by, updated_at)
-       VALUES ('${ID.R1}', '2026-09-21', 'SINGLE', '${uuid(999)}', now());`,
+      `INSERT INTO daily_distributions (restaurant_id, scope, date_from, date_to, created_by, updated_at)
+       VALUES ('${ID.R1}', 'DAY', '2026-09-21', '2026-09-21', '${uuid(999)}', now());`,
       /foreign key constraint/,
     );
   });
@@ -187,8 +233,8 @@ describe('relaciones (claves foráneas)', () => {
   it('no permite borrar una liquidación con distribuciones asignadas (FK), aparte del trigger', async () => {
     await db.exec(
       closedDay(200, '2026-09-21') +
-        `INSERT INTO weekly_settlements (id, restaurant_id, week_start, week_end, created_by, updated_at)
-         VALUES ('${uuid(300)}', '${ID.R1}', '2026-09-21', '2026-09-27', '${ID.U1}', now());
+        `INSERT INTO weekly_settlements (id, restaurant_id, week_start, week_end, policy_version_id, created_by, updated_at)
+         VALUES ('${uuid(300)}', '${ID.R1}', '2026-09-21', '2026-09-27', '${ID.V1}', '${ID.U1}', now());
          UPDATE daily_distributions SET settlement_id = '${uuid(300)}' WHERE id = '${uuid(200)}';`,
     );
     await db.fails(

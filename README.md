@@ -15,8 +15,8 @@ Aplicación web para gestionar y distribuir propinas entre el personal de restau
 |---|---|
 | `packages/tip-engine` — motor de cálculo (TypeScript puro, `BigInt`, sin dependencias) | Implementado y testeado |
 | `apps/web/prisma/schema.prisma` — esquema completo | Validado; cliente generado |
-| `apps/web/prisma/sql/0001_constraints.sql` — CHECK, índices parciales, triggers de inmutabilidad | Probado con `pnpm test:db` (PGlite) y `pnpm test:pg` (PostgreSQL real) |
-| `apps/web/prisma/migrations/` — migración inicial | Probada con `prisma migrate deploy` en `test:pg`; **no** aplicada en Neon |
+| `apps/web/prisma/sql/constraints.sql` — CHECK, índices parciales, triggers (conjunto vigente; `0001_*`/`0002_*` son los deltas de cada migración) | Probado con `pnpm test:db` (PGlite) y `pnpm test:pg` (PostgreSQL real) |
+| `apps/web/prisma/migrations/` — inicial + política de distribución versionada | Probadas con `prisma migrate deploy` en `test:pg`; en Neon solo la inicial (la segunda, pendiente de autorización) |
 | `apps/web/test-db/` — tests de base de datos (PGlite) | Implementados; corren en el CI |
 | `apps/web/test-pg/` — migraciones, concurrencia e invariante I11 (PostgreSQL real) | Implementados; corren en el CI (job `postgres`, PostgreSQL 18) |
 | Excel de referencia | Pendiente: colocar el `.xlsx` en `reference/` (no se versiona) |
@@ -63,7 +63,7 @@ reference/             Excel real del restaurante (solo local, ignorado por git)
 ## Base de datos: qué está verificado y qué no
 
 - `prisma validate` y `prisma generate`: ejecutados con éxito.
-- `pnpm test:db`: aplica el DDL que Prisma genera desde `schema.prisma` y `0001_constraints.sql` sobre
+- `pnpm test:db`: aplica el DDL que Prisma genera desde `schema.prisma` y `sql/constraints.sql` sobre
   **PGlite** (PostgreSQL 18.3 compilado a WebAssembly, en memoria) y comprueba CHECK, índices únicos,
   claves foráneas, triggers de inmutabilidad, estados, adelantos y bitácoras de solo inserción. No
   duplica lógica de negocio: inserta filas y verifica que PostgreSQL las acepta o rechaza.
@@ -75,7 +75,8 @@ reference/             Excel real del restaurante (solo local, ignorado por git)
   (con permiso `CREATEDB`; se niega a correr contra Neon). Crea una base temporal, aplica la migración
   con `prisma migrate deploy`, comprueba que `prisma migrate diff` quede vacío y prueba concurrencia
   con varias conexiones: bloqueos `FOR UPDATE`, la invariante I11 (un adelanto aplicado desde dos
-  cierres simultáneos nunca supera su monto) e índices únicos. Al terminar borra la base temporal.
+  cierres simultáneos nunca supera su monto), índices únicos, versiones de la política y cierre de un
+  período frente a un cambio de versión. Al terminar borra la base temporal.
   Detalle en [DATABASE.md](DATABASE.md) §10.
 
   ```bash
@@ -84,5 +85,6 @@ reference/             Excel real del restaurante (solo local, ignorado por git)
 
 - CI (GitHub Actions): el job `check` corre lint, typecheck, `test`, `test:db` y Prisma; el job
   `postgres` corre `test:pg` sobre un contenedor PostgreSQL 18 (misma versión mayor que Neon).
-- La migración inicial (`apps/web/prisma/migrations/20260925000000_init`) **todavía no está aplicada
-  en Neon**; se aplica solo con autorización explícita.
+- En Neon está aplicada la migración inicial (`20260925000000_init`). La de la política versionada
+  (`20260926000000_distribution_policies`) **todavía no**: se aplica solo con autorización explícita
+  (tiene una guarda que la frena si hay datos de negocio).
