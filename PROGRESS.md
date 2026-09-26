@@ -108,7 +108,7 @@ Todo lo construible sin recursos externos está hecho. Faltan verificaciones que
 
 1. ~~**PostgreSQL real**~~: migración inicial creada y verificada en cada corrida de `test:pg`; **aplicada en Neon** y verificada sin drift el 2026-09-26 (ver sección 6).
 2. ~~**Concurrencia**~~: cubierta por `test:pg` (bloqueos `FOR UPDATE`, condiciones de carrera, índices únicos e invariante I11) contra PostgreSQL real, sin tocar Neon.
-3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. El job `postgres` llegó a `main` con el PR #1; **falta confirmar** en GitHub Actions que corrió en verde.
+3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. El job `postgres` llegó a `main` con el PR #1; GitHub Actions **confirmado en verde** en `main` (jobs `check` y `postgres`, 2026-09-26).
 4. **Excel real**: colocar el `.xlsx` en `reference/` y convertirlo en fixtures anonimizados (los 3 `todo` de `excel-reference.test.ts`).
 
 ## 8. Qué debemos hacer inmediatamente al continuar
@@ -162,10 +162,10 @@ pnpm --filter @propinas/web exec prisma migrate status
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada del lado de la base (Neon migrado y verificado sin drift). Quedan confirmar el CI en GitHub y las decisiones de negocio pendientes antes de aprobar la Fase 1.**
+**Cuando retomemos: la Fase 0 está cerrada del lado de la base (Neon migrado y verificado sin drift). El CI en GitHub está confirmado en verde. Quedan las decisiones de negocio pendientes antes de aprobar la Fase 1.**
 
 1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (257), `pnpm test:db` (206) y `pnpm test:pg` (11) en verde.
-2. **Verificar el CI real:** confirmar en la pestaña Actions de GitHub que los jobs `check` y `postgres` (PostgreSQL 18) corrieron en verde sobre `main` tras el merge del PR #1 (`cb41b3c`). Todavía no se revisó.
+2. ~~**Verificar el CI real**~~: confirmado el 2026-09-26; los jobs `check` y `postgres` (PostgreSQL 18) corren en verde sobre `main`.
 3. **Pendientes no bloqueantes:** Excel real (A4, los 3 `todo`), pozo del negocio (D1) y las confirmaciones de la sección 10.
 4. **Fase 1, paso 1** (solo con aprobación explícita): scaffold de Next.js en `apps/web` + Better Auth (conciliar sus tablas con `users`/`auth_tokens`), siguiendo el orden del MVP. Al escribir los servicios de cierre, respetar el protocolo de bloqueo que prueba `test:pg` (`FOR UPDATE` sobre la distribución y los adelantos; validar la mezcla de pozos dentro de la transacción).
 
