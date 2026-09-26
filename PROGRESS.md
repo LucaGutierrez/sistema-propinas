@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, probada en local; **no aplicada en Neon**).
+Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, **aplicada en Neon production** tras validarla en la branch `test-distribution-policies`).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
@@ -93,7 +93,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 **`apps/web/test-pg`** (2026-09-25): **11 tests** contra un PostgreSQL real (`pnpm test:pg`, requiere `TEST_DATABASE_URL` de un servidor descartable; se niega a correr contra Neon). Cada corrida crea una base temporal, aplica la migración con `prisma migrate deploy` y la borra al final. Verifica: migración sin diferencias con `schema.prisma`; invariante **I11** con `FOR UPDATE` (dos cierres simultáneos sobre el mismo adelanto: el segundo espera y aplica solo el saldo; verificado que sin `FOR UPDATE` fallan); qué frena la base sola (CHECK ante incrementos relativos) y qué no (escritura absoluta sin bloqueo pierde una actualización → el servicio **debe** bloquear); cierre simultáneo del mismo día; índices únicos bajo concurrencia; y el límite del trigger anti-mezcla de pozos (documentado, lo valida el servicio). Detalle en `DATABASE.md` §10.
 
-**Neon migrado correctamente** (verificado el 2026-09-26, solo lectura, sin modificar la base): la migración `20260925000000_init` está aplicada en Neon (PostgreSQL 18.6).
+**Neon migrado correctamente** (verificado el 2026-09-26, solo lectura, sin modificar la base): la migración `20260925000000_init` está aplicada en Neon (PostgreSQL 18.6). *(Estado de ese día para la migración inicial; después se aplicó también `20260926000000_distribution_policies`, ver §6.3.)*
 - `prisma migrate status`: 1 migración encontrada, "Database schema is up to date!"; **no hay migraciones pendientes**.
 - `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script --exit-code` (desde `apps/web`): migración vacía, código de salida 0 → **sin drift**.
 - Catálogo de PostgreSQL comparado por nombre contra `migration.sql` (transacción `READ ONLY` + `ROLLBACK`): 18 tablas, 10 enums (con los mismos valores y orden), 28 índices (sin contar claves primarias), 8 funciones, 13 triggers, 40 CHECK constraints y 43 foreign keys; ninguno falta ni sobra. Sin triggers deshabilitados ni constraints sin validar.
@@ -134,7 +134,7 @@ Commits: `8fbf56f` (demo con locales, permisos e invitaciones) + los cambios de 
 
 ### 6.3 Persistencia de la política versionada (Prisma, 2026-09-26)
 
-Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya implementado en la demo. Detalle en `DATABASE.md` rev. 6. **No toca Neon** ni `packages/tip-engine`; la demo sigue en `localStorage`.
+Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya implementado en la demo. Detalle en `DATABASE.md` rev. 6. No toca `packages/tip-engine`; la demo sigue en `localStorage`.
 
 - **Tablas nuevas:** `distribution_policy_versions` (un parámetro por columna, enums con **solo** las opciones implementadas, `template_code`/`template_version` para la configuración estándar, que vive en el código; origen `STANDARD`/`COPY`/`CHANGE`; `period_start_weekday` configurable: lunes es el estándar, no una regla), `policy_version_positions` (porción `NUMERIC(20,10)` de cada puesto en la versión), `period_policy_changes` (bitácora automática o con motivo), `period_hours` (horas totales del período por empleado; tope 24 × días del período, sin límite de negocio inventado).
 - **Cambios:** `restaurants.current_policy_version_id` (sin `pool_mode` ni `week_starts_on`); `positions` como identidad estable (sin `weight`, `team_id` opcional, nombre único por restaurante sin distinguir mayúsculas; renombrar no crea versión); repartos `DAY`/`PERIOD` con `date_from`/`date_to` y sin superposición mediante una **restricción de exclusión** (`btree_gist`), que la hace cumplir también entre transacciones concurrentes (reemplaza `date`, `pool_mode`, `team_id`, el índice por día y equipo y el trigger anti-mezcla; I13 pasa a "sin superposición"); `tip_entries.entry_date`; `portion_snapshot` y puntos `NUMERIC(30,12)`; datos de anulación en `advances`; `weekly_settlements.policy_version_id` + `policy_snapshot` (JSONB, solo auditoría) + `calc_version` obligatorios al cerrar.
@@ -143,7 +143,8 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Tests:** `test:db` **250** (nuevo `policies.test.ts`, tests de alcance, superposición, fecha de la propina, tope de horas genérico — 24 × días del rango —, anulación de adelantos y la guarda de la migración); `test:pg` **19** (superposición bajo concurrencia incluso en `REPEATABLE READ`, versiones simultáneas, marcas por transacción, cierre vs. cambio de versión, horas durante un cierre; `migrate diff` vacío). App: los 12 importes de la semana de Library quedan fijados como regresión y son idénticos con la porción de 10 decimales; 0,65/45 se representa. La fórmula provisional y el motor no cambiaron.
 - **Revisión de lo retirado con `pool_mode`/`team_id`:** el CHECK `SINGLE ⇔ team_id IS NULL`, el trigger anti-mezcla y el índice "una vigente por día y equipo" solo tenían sentido con dos modos de pozo; con `SINGLE_POOL` la restricción de exclusión es más fuerte que el índice anterior (también impide solapamientos entre rangos). No se perdió ninguna protección vigente. Un pozo por equipo se agregará como nueva opción de `pool_structure` con su migración (clave de pozo en el reparto y en la restricción).
 - **Verificado localmente (2026-09-26):** `typecheck`, `lint`, `format:check`, `test` (web 82, tip-engine 257 + 3 `todo`), `test:db` (250), `test:pg` (19, sobre un PostgreSQL 18 local y descartable: `embedded-postgres` en una carpeta temporal, nunca Neon), `prisma validate`/`generate` y `next build`.
-- **Pendiente:** aplicar la migración en Neon (con autorización; primero en una rama de Neon, `migrate diff` sin drift); los servicios que escriben estas tablas (crear/cambiar política, abrir y cerrar período con snapshot) llegan con la persistencia real (§11).
+- **Neon (2026-09-26):** aplicada en Neon production el 2026-09-26 tras validarla en la branch de prueba `test-distribution-policies`: `migrate status` al día, `migrate diff` vacío, catálogo idéntico a la base de los tests y sin datos de negocio. Detalle en `DATABASE.md` §10 ("Estado en Neon").
+- **Pendiente:** los servicios que escriben estas tablas (crear/cambiar política, abrir y cerrar período con snapshot) llegan con la persistencia real (§11).
 
 ## 7. Qué falta de la Fase 0
 
@@ -233,11 +234,11 @@ Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**)
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada (Neon con la migración inicial, CI en verde). La Fase 1 avanza como demo en el navegador; la política versionada ya tiene su esquema y migración probados en local (§6.3), sin aplicar en Neon.**
+**Cuando retomemos: la Fase 0 está cerrada (CI en verde). La Fase 1 avanza como demo en el navegador; la política versionada ya tiene su esquema y su migración aplicada en Neon production (§6.3), sin datos de negocio.**
 
 1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 82 + tip-engine 257), `pnpm test:db` (250), `pnpm test:pg` (19, PostgreSQL descartable), `pnpm --filter @propinas/web build`. Confirmar que el CI (job `postgres`) quedó en verde con la migración nueva.
 2. **Configuración de Library:** confirmar con el restaurante los parámetros pendientes (§10, pantalla "Configuración de distribución") y conseguir el `.xlsx` (P7). No son decisiones globales de GUTIP.
-3. ~~**Diseño de datos (Prisma)** de la política versionada~~ (hecho el 2026-09-26, §6.3). **Neon:** aplicar `20260926000000_distribution_policies` solo con autorización explícita.
+3. ~~**Diseño de datos (Prisma)** de la política versionada~~ (hecho el 2026-09-26, §6.3). **Neon:** `20260926000000_distribution_policies` aplicada en production (2026-09-26); la branch de prueba `test-distribution-policies` se puede borrar desde la consola de Neon.
 4. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
 5. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
 

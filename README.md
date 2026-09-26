@@ -16,7 +16,7 @@ Aplicación web para gestionar y distribuir propinas entre el personal de restau
 | `packages/tip-engine` — motor de cálculo (TypeScript puro, `BigInt`, sin dependencias) | Implementado y testeado |
 | `apps/web/prisma/schema.prisma` — esquema completo | Validado; cliente generado |
 | `apps/web/prisma/sql/constraints.sql` — CHECK, índices parciales, triggers (conjunto vigente; `0001_*`/`0002_*` son los deltas de cada migración) | Probado con `pnpm test:db` (PGlite) y `pnpm test:pg` (PostgreSQL real) |
-| `apps/web/prisma/migrations/` — inicial + política de distribución versionada | Probadas con `prisma migrate deploy` en `test:pg`; en Neon solo la inicial (la segunda, pendiente de autorización) |
+| `apps/web/prisma/migrations/` — inicial + política de distribución versionada | Probadas con `prisma migrate deploy` en `test:pg`; **las dos aplicadas en Neon production** |
 | `apps/web/test-db/` — tests de base de datos (PGlite) | Implementados; corren en el CI |
 | `apps/web/test-pg/` — migraciones, concurrencia e invariante I11 (PostgreSQL real) | Implementados; corren en el CI (job `postgres`, PostgreSQL 18) |
 | Excel de referencia | Pendiente: colocar el `.xlsx` en `reference/` (no se versiona) |
@@ -85,6 +85,7 @@ reference/             Excel real del restaurante (solo local, ignorado por git)
 
 - CI (GitHub Actions): el job `check` corre lint, typecheck, `test`, `test:db` y Prisma; el job
   `postgres` corre `test:pg` sobre un contenedor PostgreSQL 18 (misma versión mayor que Neon).
-- En Neon está aplicada la migración inicial (`20260925000000_init`). La de la política versionada
-  (`20260926000000_distribution_policies`) **todavía no**: se aplica solo con autorización explícita
-  (tiene una guarda que la frena si hay datos de negocio).
+- En Neon production están aplicadas las dos migraciones (`20260925000000_init` y
+  `20260926000000_distribution_policies`, esta el 2026-09-26, validada antes en la branch de prueba
+  `test-distribution-policies`). `prisma migrate status` está al día, `prisma migrate diff` contra
+  `schema.prisma` es vacío y la base no tiene datos de negocio. Detalle en [DATABASE.md](DATABASE.md) §10.
