@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-25 (tests contra PostgreSQL real: migraciones, concurrencia e I11; job de CI con PostgreSQL 18). La migración **sigue sin aplicarse en Neon**.
+Última actualización: 2026-09-26 (verificación de solo lectura de Neon: la migración inicial está aplicada, sin drift y sin migraciones pendientes).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [README.md](README.md) (comandos).
@@ -71,7 +71,7 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 ## 6. Qué se implementó hasta ahora (Fase 0)
 
-**Repositorio en GitHub** (`LucaGutierrez/sistema-propinas`). En `main`: `d3ac4d8` (inicial), `3ab16a8` (este archivo) y `1e7f0f4` (migración inicial e invariantes). El CI corrió en verde sobre `1e7f0f4`. Los tests contra PostgreSQL real se agregan en la rama `claude/proyecto-continuacion-j1jaup`, pendiente de revisión.
+**Repositorio en GitHub** (`LucaGutierrez/sistema-propinas`). En `main`: `d3ac4d8` (inicial), `3ab16a8` (este archivo) y `1e7f0f4` (migración inicial e invariantes). El CI corrió en verde sobre `1e7f0f4`. Los tests contra PostgreSQL real (rama `claude/proyecto-continuacion-j1jaup`) se integraron a `main` con el PR #1 (`cb41b3c`).
 
 **`packages/tip-engine`** (motor puro):
 - `fixed.ts`, `money.ts`, `exchange.ts`: decimales de escala fija sobre `BigInt`, redondeo half-up, USD → ARS.
@@ -85,9 +85,16 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 **`apps/web/test-db`**: **206 tests** de base de datos sobre PGlite (`pnpm test:db`), con el DDL generado desde `schema.prisma`. Verificados con pruebas de mutación (con el SQL anterior fallan los 40 tests de flujos prohibidos agregados el 2026-09-25).
 
-**`apps/web/prisma/migrations/20260925000000_init`**: DDL de Prisma + copia literal de `sql/0001_constraints.sql`. Probada con `prisma migrate deploy` (primero en PGlite por socket; ahora en cada corrida de `test:pg` sobre PostgreSQL real); `prisma migrate diff` posterior vacío (Prisma no borra índices parciales, CHECK ni triggers). `test-db/migrations.test.ts` garantiza que la migración y la base de los tests son idénticas. **No aplicada en Neon.**
+**`apps/web/prisma/migrations/20260925000000_init`**: DDL de Prisma + copia literal de `sql/0001_constraints.sql`. Probada con `prisma migrate deploy` (primero en PGlite por socket; ahora en cada corrida de `test:pg` sobre PostgreSQL real); `prisma migrate diff` posterior vacío (Prisma no borra índices parciales, CHECK ni triggers). `test-db/migrations.test.ts` garantiza que la migración y la base de los tests son idénticas. **Aplicada en Neon** (ver abajo).
 
 **`apps/web/test-pg`** (2026-09-25): **11 tests** contra un PostgreSQL real (`pnpm test:pg`, requiere `TEST_DATABASE_URL` de un servidor descartable; se niega a correr contra Neon). Cada corrida crea una base temporal, aplica la migración con `prisma migrate deploy` y la borra al final. Verifica: migración sin diferencias con `schema.prisma`; invariante **I11** con `FOR UPDATE` (dos cierres simultáneos sobre el mismo adelanto: el segundo espera y aplica solo el saldo; verificado que sin `FOR UPDATE` fallan); qué frena la base sola (CHECK ante incrementos relativos) y qué no (escritura absoluta sin bloqueo pierde una actualización → el servicio **debe** bloquear); cierre simultáneo del mismo día; índices únicos bajo concurrencia; y el límite del trigger anti-mezcla de pozos (documentado, lo valida el servicio). Detalle en `DATABASE.md` §10.
+
+**Neon migrado correctamente** (verificado el 2026-09-26, solo lectura, sin modificar la base): la migración `20260925000000_init` está aplicada en Neon (PostgreSQL 18.6).
+- `prisma migrate status`: 1 migración encontrada, "Database schema is up to date!"; **no hay migraciones pendientes**.
+- `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script --exit-code` (desde `apps/web`): migración vacía, código de salida 0 → **sin drift**.
+- Catálogo de PostgreSQL comparado por nombre contra `migration.sql` (transacción `READ ONLY` + `ROLLBACK`): 18 tablas, 10 enums (con los mismos valores y orden), 28 índices (sin contar claves primarias), 8 funciones, 13 triggers, 40 CHECK constraints y 43 foreign keys; ninguno falta ni sobra. Sin triggers deshabilitados ni constraints sin validar.
+- `_prisma_migrations`: una sola fila (`20260925000000_init`, terminada el 2026-09-25 17:13:58 UTC, sin rollback) cuyo **checksum coincide** con `migration.sql`.
+- Todas las tablas están **vacías**.
 
 **Infraestructura**: ESLint con reglas que impiden `Number`, `Math`, `Date`, floats e imports externos en el motor; Prettier; `.gitattributes` (LF); `.gitignore` verificado (secretos, `.env*`, `reference/*` ignorados; `.env.example` versionado); `.github/workflows/ci.yml` con dos jobs: `check` (lint, typecheck, `test`, `test:db`, Prisma, motor sin dependencias) y `postgres` (`test:pg` sobre un contenedor **PostgreSQL 18**, misma versión mayor que Neon 18.6, para aproximar ese entorno; no se conecta a Neon).
 
@@ -99,16 +106,16 @@ Versiones fijadas a propósito: TypeScript 6 (typescript-eslint aún no soporta 
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:
 
-1. **PostgreSQL real**: ~~crear la migración inicial y revisar el drift~~ (hecho; verificado en cada corrida de `test:pg`). Falta **aplicarla en Neon** con `prisma migrate deploy` (requiere autorización explícita del usuario).
+1. ~~**PostgreSQL real**~~: migración inicial creada y verificada en cada corrida de `test:pg`; **aplicada en Neon** y verificada sin drift el 2026-09-26 (ver sección 6).
 2. ~~**Concurrencia**~~: cubierta por `test:pg` (bloqueos `FOR UPDATE`, condiciones de carrera, índices únicos e invariante I11) contra PostgreSQL real, sin tocar Neon.
-3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. El nuevo job `postgres` fue agregado pero **aún no corrió en GitHub Actions**; para verificarlo hay que abrir un Pull Request de la rama hacia `main`.
+3. ~~**CI en GitHub**~~: el repositorio está en GitHub y el CI corrió en verde sobre `main`. El job `postgres` llegó a `main` con el PR #1; **falta confirmar** en GitHub Actions que corrió en verde.
 4. **Excel real**: colocar el `.xlsx` en `reference/` y convertirlo en fixtures anonimizados (los 3 `todo` de `excel-reference.test.ts`).
 
 ## 8. Qué debemos hacer inmediatamente al continuar
 
 1. Correr los comandos de verificación para confirmar que todo sigue en verde (ver más abajo).
 2. ~~Decidir A1 y A2~~ (hecho el 2026-09-25). Si es posible, confirmar el pozo (D1).
-3. ~~Conseguir una base PostgreSQL real~~ (Neon, hecho el 2026-09-25). ~~Probar concurrencia~~ (hecho con `test:pg`). Queda aplicar la migración en Neon (pendiente 1 de la sección 7), solo con autorización.
+3. ~~Conseguir una base PostgreSQL real~~ (Neon, hecho el 2026-09-25). ~~Probar concurrencia~~ (hecho con `test:pg`). ~~Aplicar la migración en Neon~~ (aplicada y verificada el 2026-09-26).
 
 Comandos (desde la raíz; en PowerShell/Bash puede hacer falta agregar `%APPDATA%\npm` al `PATH` porque pnpm se instaló con `npm install -g pnpm`):
 
@@ -120,6 +127,8 @@ TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres" pnpm 
 # Prisma necesita DATABASE_URL; para validate/generate sirve un valor ficticio:
 DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma validate
 DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma generate
+# Estado de Neon (solo lectura; usa apps/web/.env). `@propinas/web` no tiene script "prisma": usar exec.
+pnpm --filter @propinas/web exec prisma migrate status
 ```
 
 ## 9. Qué NO debemos hacer todavía
@@ -131,7 +140,7 @@ DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma ge
 - No usar `Number`, `Math`, `Date` ni floats en `packages/tip-engine` (ESLint y los tests lo impiden).
 - No convertir en tests los números de ejemplo de la conversación (Roro $516.447, etc.).
 - No versionar datos reales (Excel con sueldos, `.env`, credenciales).
-- No asumir la regla del pozo (único o por equipo). No afirmar que el SQL fue probado en Neon: se probó en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
+- No asumir la regla del pozo (único o por equipo). En Neon se verificó la **estructura** (objetos, checksum, sin drift), no el **comportamiento**: los triggers y la concurrencia se probaron en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
 - No correr `test:pg` apuntando a Neon ni a una base con datos (crea y borra bases).
 - No hacer `push` sin que el usuario lo pida, ni merge a `main` sin su aprobación.
 
@@ -153,12 +162,11 @@ DATABASE_URL="postgresql://user:password@localhost:5432/propinas" pnpm prisma ge
 
 ## NEXT STEP
 
-**Cuando retomemos: revisar la rama `claude/proyecto-continuacion-j1jaup` (tests contra PostgreSQL real) y, si se aprueba, integrarla a `main`. Después, aplicar la migración en Neon (solo con autorización explícita).**
+**Cuando retomemos: la Fase 0 está cerrada del lado de la base (Neon migrado y verificado sin drift). Quedan confirmar el CI en GitHub y las decisiones de negocio pendientes antes de aprobar la Fase 1.**
 
 1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (257), `pnpm test:db` (206) y `pnpm test:pg` (11) en verde.
-2. **Verificar el CI real:** abrir un Pull Request de `claude/proyecto-continuacion-j1jaup` hacia `main` (solo con aprobación del usuario; abrirlo no hace merge) para que GitHub Actions ejecute por primera vez los jobs `check` y `postgres` (PostgreSQL 18), y confirmarlos en verde.
-3. **Integrar a `main`** (cuando el usuario lo apruebe).
-4. **Aplicar en Neon** (cuando el usuario lo autorice): desde `apps/web`, `pnpm exec prisma migrate deploy`; después `prisma migrate status` y `prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma` (debe dar vacío).
-5. **Fase 1, paso 1** (solo con aprobación explícita): scaffold de Next.js en `apps/web` + Better Auth (conciliar sus tablas con `users`/`auth_tokens`), siguiendo el orden del MVP. Al escribir los servicios de cierre, respetar el protocolo de bloqueo que prueba `test:pg` (`FOR UPDATE` sobre la distribución y los adelantos; validar la mezcla de pozos dentro de la transacción).
+2. **Verificar el CI real:** confirmar en la pestaña Actions de GitHub que los jobs `check` y `postgres` (PostgreSQL 18) corrieron en verde sobre `main` tras el merge del PR #1 (`cb41b3c`). Todavía no se revisó.
+3. **Pendientes no bloqueantes:** Excel real (A4, los 3 `todo`), pozo del negocio (D1) y las confirmaciones de la sección 10.
+4. **Fase 1, paso 1** (solo con aprobación explícita): scaffold de Next.js en `apps/web` + Better Auth (conciliar sus tablas con `users`/`auth_tokens`), siguiendo el orden del MVP. Al escribir los servicios de cierre, respetar el protocolo de bloqueo que prueba `test:pg` (`FOR UPDATE` sobre la distribución y los adelantos; validar la mezcla de pozos dentro de la transacción).
 
 No se avanza a la Fase 1 sin que el usuario lo apruebe.
