@@ -26,7 +26,8 @@
     "test-db",
     "test-pg",
     "vitest.db.config.ts",
-    "vitest.pg.config.ts"
+    "vitest.pg.config.ts",
+    "scripts"
   ],
   "exclude": ["node_modules", "src/generated"]
 }

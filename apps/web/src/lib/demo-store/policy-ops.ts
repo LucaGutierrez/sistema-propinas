@@ -10,46 +10,42 @@
  *
  * Cambiar datos del período (horas, pozos, adelantos) o del personal NO crea versiones.
  */
-import { formatScaled, parseDecimal } from '@/lib/decimal';
-import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
 import {
-  isSupported,
-  optionLabel,
-  paramDefinition,
-  type DistributionConfig,
-  type ParamKey,
-} from './config';
+  planAddPosition,
+  planConfigValue,
+  planPortionChange,
+  type PolicyChangePlan,
+} from '@/lib/policy/changes';
+import { type ParamKey } from './config';
 import { MIN_REASON_LENGTH } from './envelopes';
 import { openWeek, type Outcome, type Position, type Venue, type Week } from './model';
 import { appendVersion, currentVersion, versionOf, type PolicyVersion } from './policy';
 
 const fail = (error: string): Outcome => ({ ok: false, error });
 
-type Draft = Pick<PolicyVersion, 'values' | 'positions'>;
-
 /** ¿La semana fue reabierta para corregirla? Entonces conserva su versión original. */
 function isRedo(week: Week): boolean {
   return (week.voidedRevisions?.length ?? 0) > 0;
 }
 
+/** Aplica a la demo un cambio validado por `@/lib/policy/changes` (mismas reglas que la base). */
 function changePolicy(
   venue: Venue,
-  change: (current: PolicyVersion) => Draft | string,
-  summary: string,
+  plan: (current: PolicyVersion) => PolicyChangePlan,
   by: string,
   at: string,
 ): Outcome {
   const current = currentVersion(venue.policy);
-  const draft = change(current);
-  if (typeof draft === 'string') return fail(draft);
+  const result = plan(current);
+  if (!result.ok) return fail(result.error);
 
   const { policy, version } = appendVersion(venue.policy, {
     createdAt: at,
     createdBy: by,
     origin: 'CAMBIO',
-    summary,
-    values: draft.values,
-    positions: draft.positions,
+    summary: result.summary,
+    values: result.draft.values,
+    positions: result.draft.positions,
   });
 
   // La semana abierta pasa a la versión nueva (salvo si es una semana rehecha).
@@ -74,58 +70,11 @@ export function setConfigValue(
   by: string,
   at: string,
 ): Outcome {
-  const definition = paramDefinition(key);
-  if (!definition.options.some((o) => o.value === value)) return fail('Esa opción no existe.');
-  if (!isSupported(key, value)) {
-    return fail('GUTIP todavía no calcula con esa opción.');
-  }
-  const previous = currentVersion(venue.policy).values[key];
-  if (previous === value) return fail('Ese ya es el valor vigente.');
-  return changePolicy(
-    venue,
-    (current) => ({
-      values: { ...current.values, [key]: value } as DistributionConfig,
-      positions: current.positions,
-    }),
-    `${definition.label}: ${optionLabel(key, previous)} → ${optionLabel(key, value)}`,
-    by,
-    at,
-  );
-}
-
-function validFactor(factor: string): string | null {
-  const factorE4 = parseDecimal(factor, FACTOR_SCALE);
-  return factorE4 === null || factorE4 === 0n
-    ? 'La porción tiene que ser un número mayor que cero (hasta 4 decimales).'
-    : null;
-}
-
-/** Normaliza el peso para mostrarlo igual en todos lados ("0.022" → "0,022"). */
-function displayFactor(factor: string): string {
-  const factorE4 = parseDecimal(factor, FACTOR_SCALE) ?? 0n;
-  return formatScaled(factorE4, FACTOR_SCALE, FACTOR_SCALE).replace(/0+$/, '').replace(/,$/, '');
+  return changePolicy(venue, (current) => planConfigValue(current, key, value), by, at);
 }
 
 export function addPosition(venue: Venue, position: Position, by: string, at: string): Outcome {
-  const name = position.name.trim();
-  if (name === '') return fail('Poné un nombre para el puesto.');
-  const current = currentVersion(venue.policy);
-  if (current.positions.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
-    return fail(`Ya existe el puesto "${name}".`);
-  }
-  const invalid = validFactor(position.factor);
-  if (invalid) return fail(invalid);
-  const factor = displayFactor(position.factor);
-  return changePolicy(
-    venue,
-    (cur) => ({
-      values: cur.values,
-      positions: [...cur.positions, { id: position.id, name, factor }],
-    }),
-    `Nuevo puesto: ${name} (porción ${factor})`,
-    by,
-    at,
-  );
+  return changePolicy(venue, (current) => planAddPosition(current, position), by, at);
 }
 
 export function setPositionFactor(
@@ -135,25 +84,7 @@ export function setPositionFactor(
   by: string,
   at: string,
 ): Outcome {
-  const current = currentVersion(venue.policy);
-  const position = current.positions.find((p) => p.id === positionId);
-  if (!position) return fail('Ese puesto no existe.');
-  const invalid = validFactor(factor);
-  if (invalid) return fail(invalid);
-  const next = displayFactor(factor);
-  if (parseDecimal(next, FACTOR_SCALE) === parseDecimal(position.factor, FACTOR_SCALE)) {
-    return fail('Esa ya es la porción vigente.');
-  }
-  return changePolicy(
-    venue,
-    (cur) => ({
-      values: cur.values,
-      positions: cur.positions.map((p) => (p.id === positionId ? { ...p, factor: next } : p)),
-    }),
-    `${position.name}: porción ${position.factor} → ${next}`,
-    by,
-    at,
-  );
+  return changePolicy(venue, (current) => planPortionChange(current, positionId, factor), by, at);
 }
 
 /**

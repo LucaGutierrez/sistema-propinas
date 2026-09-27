@@ -550,4 +550,34 @@ Bandeja de sobres de la semana: Roro → $516.447 · Leo → $623.450 · Marcos 
   - **Production:** antes de migrar se verificó que no era la branch de prueba, que tenía solo `20260925000000_init` y 0 filas de negocio. `prisma migrate deploy` aplicó `20260926000000_distribution_policies` sin errores; `prisma migrate status`: "Database schema is up to date!" (2 migraciones, terminadas y sin rollback); `prisma migrate diff` contra `schema.prisma`: vacío. Catálogo idéntico a la base de los tests: 22 tablas (incluidas `distribution_policy_versions`, `policy_version_positions`, `period_policy_changes`, `period_hours`), 21 enums, 60 FK, 52 CHECK, 26 triggers (ninguno deshabilitado), 32 índices sin contar PK, restricción de exclusión `ex_daily_distributions_no_overlap` con su índice GiST, extensión `btree_gist` 1.8; ninguna restricción sin validar. **Sin datos de negocio**: no se insertaron datos de prueba, ni seed, ni se corrió `test:pg` en production.
 - **Próximas migraciones:** mismo procedimiento (branch de prueba de Neon → verificación → production), solo con autorización explícita. En Neon conviene `migrate deploy`; `migrate dev` necesita una base *shadow* (usar una rama de Neon aparte). `test:pg` no reemplaza verificar Neon en sí (roles, pooling, extensiones, configuración del proveedor).
 - **Límites conocidos de las restricciones en base de datos:** la invariante I1 (Σ ítems = total) y I4 (`applied_cents` = Σ aplicaciones vigentes) no se pueden expresar con un CHECK; las garantiza el servicio dentro de su transacción y el motor de cálculo. "La versión no tiene puntos por definir" (bloqueo del cierre) la valida el servicio.
-- `seed.ts` (pendiente, solo desarrollo): restaurante demo con la configuración estándar (versión 1 con sus puestos y porciones), empleados, cotización y un período para probar liquidación y sobres. Sin datos reales.
+- **No hay seed automático.** No existe `prisma/seed.ts` ni `prisma.seed` en `package.json`, así que `migrate dev/reset` no insertan nada. Para inicializar un restaurante de desarrollo se usa `db:bootstrap` (§11), que se ejecuta solo a mano.
+
+---
+
+## 11. Acceso desde la aplicación (Fase 1, política de distribución)
+
+Primera pantalla con persistencia real: **"Configuración de distribución"**. Las demás pantallas siguen en la demo del navegador (`localStorage`).
+
+**Capas** (`apps/web/src/server/`, solo servidor; ningún componente de la interfaz importa Prisma):
+- `db.ts`: cliente Prisma (conexión desde `DATABASE_URL`, nunca en el código).
+- `context.ts`: contexto de acceso (restaurante + operador), ver abajo.
+- `policy/repository.ts`: **lecturas**, todas con `restaurantId` en el filtro: restaurante, versión vigente, una versión con sus puestos y porciones, historial, períodos `CLOSED` por versión y personas activas por puesto. Las porciones `NUMERIC(20,10)` se convierten a texto exacto (sin floats).
+- `policy/service.ts`: **escrituras**, cada una en **una transacción** que empieza con `SELECT … FROM restaurants … FOR UPDATE` (dos cambios simultáneos se ordenan: versiones 2 y 3 encadenadas, probado en `test:pg`):
+  - *Cambiar un parámetro, agregar un puesto o cambiar una porción*: inserta la versión `n + 1` (`CHANGE`, `previous_version_id`, `summary`, `created_by`) con **todos** sus puestos, actualiza `restaurants.current_policy_version_id` y pasa cada período `OPEN` que no reemplaza a otro (`supersedes_settlement_id IS NULL`) a la versión nueva, con su fila automática en `period_policy_changes`. Un período reabierto (revisión que reemplaza a otra) conserva su versión. Nunca hace `UPDATE` de una versión (además, la base lo rechaza).
+  - *Agregar un puesto*: crea su identidad en `positions` (o reutiliza la del mismo nombre, sin distinguir mayúsculas) y su porción en la versión nueva.
+  - *Renombrar un puesto*: cambia `positions.name` y **no** crea versión (el servicio existe; la pantalla todavía no lo ofrece).
+  - Las validaciones y mensajes son las mismas funciones puras que usa la demo (`src/lib/policy/changes.ts`).
+- `app/configuracion/actions.ts`: acciones del servidor. Resuelven el acceso en cada llamada (el navegador nunca manda el restaurante ni el usuario) y llaman al servicio.
+
+**Fuente de datos y contexto (antes de Better Auth).** Sin `GUTIP_DATA_SOURCE=database` la pantalla usa la demo y no toca la base. Con esa variable, el servidor toma el restaurante de `GUTIP_RESTAURANT_ID` y el operador de `GUTIP_OPERATOR_EMAIL`, y verifica en la base que el operador sea **miembro** de ese restaurante (`memberships`). Puede editar si su rol es `OWNER` o `ADMIN` (matriz de `ARCHITECTURE.md` §9). Es solo para desarrollo: **no se activa en un despliegue** hasta que exista la sesión, porque las acciones del servidor operan como ese operador.
+
+**Bootstrap (`pnpm --filter @propinas/web db:bootstrap --confirm`)**, `apps/web/scripts/bootstrap-restaurant.ts`, idempotente, en una transacción:
+- usuario operador (`GUTIP_OPERATOR_EMAIL` / `GUTIP_OPERATOR_NAME`) si no existe;
+- restaurante `GUTIP_RESTAURANT_ID` (`GUTIP_RESTAURANT_NAME`) si no existe;
+- membresía `OWNER` del operador si no existe;
+- si el restaurante no tiene política: versión 1 `STANDARD` (`template_code = 'gutip-standard'`, `template_version = 1`, lunes como inicio) con los puestos estándar Supervisor 0,014 · Barra 0,022 · Salón 0,022 · Bacha 0,007, y `current_policy_version_id`.
+No crea personal, períodos ni datos de negocio. Exige `--confirm`; se niega con `NODE_ENV=production`; contra una base no local exige `--allow-remote`; nunca imprime la URL ni el host (ante un error muestra solo el tipo). Probado en PostgreSQL local; **Neon todavía no fue inicializado**.
+
+**Cuando exista la sesión (Better Auth):** `configuredOperator()` + `resolveAccess()` se reemplazan por `requireAccess(restaurantId, capacidad)` en la página y en las acciones; el repositorio y el servicio no cambian (ya reciben `restaurantId` y el usuario como parámetros).
+
+**Tests:** `test:pg` (`test-pg/policy-service.test.ts`, con Prisma contra PostgreSQL real): bootstrap estándar e idempotente (también dos a la vez), lectura de la vigente, versión nueva al cambiar porción/parámetro/puesto, versión anterior inmutable, puntero actualizado, historial con períodos cerrados, puesto estable con porción distinta entre versiones, renombrar sin versión, transacción revertida sin restos, cambios simultáneos encadenados, período abierto vs. reabierto con `period_policy_changes`, y aislamiento entre restaurantes (ids de otro restaurante rechazados, acceso sin membresía rechazado).

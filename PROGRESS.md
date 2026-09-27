@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, **aplicada en Neon production** tras validarla en la branch `test-distribution-policies`).
+Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, **aplicada en Neon production** tras validarla en la branch `test-distribution-policies`. **"Configuración de distribución" ya lee y escribe la base** con Prisma (§6.4); las demás pantallas siguen en la demo; Neon todavía no tiene restaurante inicializado).
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
@@ -146,6 +146,18 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Neon (2026-09-26):** aplicada en Neon production el 2026-09-26 tras validarla en la branch de prueba `test-distribution-policies`: `migrate status` al día, `migrate diff` vacío, catálogo idéntico a la base de los tests y sin datos de negocio. Detalle en `DATABASE.md` §10 ("Estado en Neon").
 - **Pendiente:** los servicios que escriben estas tablas (crear/cambiar política, abrir y cerrar período con snapshot) llegan con la persistencia real (§11).
 
+### 6.4 Fase 1 — primera pantalla con persistencia real (2026-09-26)
+
+**"Configuración de distribución" lee y escribe la política en la base** (Prisma). La demo sigue funcionando igual y es la fuente por defecto. Detalle en `DATABASE.md` §11 y `ARCHITECTURE.md` §6.1.
+
+- **Fuente de datos:** sin `GUTIP_DATA_SOURCE=database`, la pantalla usa la demo (`localStorage`). Con esa variable usa la base, con el restaurante de `GUTIP_RESTAURANT_ID` y el operador de `GUTIP_OPERATOR_EMAIL` (se verifica su membresía; edita `OWNER`/`ADMIN`). No hay login todavía: **no activar en un despliegue**.
+- **Capa de servidor:** `src/server/policy/repository.ts` (lecturas, todas por `restaurantId`) y `src/server/policy/service.ts` (cada cambio = versión nueva en una transacción con bloqueo del restaurante; puntero vigente; período abierto con registro automático; período reabierto conserva su versión; renombrar un puesto no crea versión). Acciones del servidor en `src/app/configuracion/actions.ts`.
+- **Separación demo / base:** reglas puras compartidas en `src/lib/policy/` (la demo usa las mismas validaciones y mensajes); vista sin fuente de datos y un contenedor por fuente.
+- **Bootstrap:** `pnpm --filter @propinas/web db:bootstrap --confirm` crea, idempotente, operador + membresía `OWNER` + restaurante + política estándar v1 (Supervisor 0,014, Barra 0,022, Salón 0,022, Bacha 0,007). No crea personal. No es un seed de Prisma; exige `--confirm`, se niega con `NODE_ENV=production` y pide `--allow-remote` para una base no local. **No se ejecutó contra Neon.**
+- **Dependencias:** `tsx` (dev) para correr el bootstrap; `pnpm-workspace.yaml` declara `esbuild: false` (pnpm 12 lo exige; sin eso `pnpm install --frozen-lockfile` falla).
+- **Tests:** web 91 (planificadores de cambios, plantilla estándar, traducción a la base), `test:pg` 33 (14 del servicio con Prisma: ver `DATABASE.md` §11). Probado además en el navegador contra un PostgreSQL local descartable: cambiar una porción crea la versión 2 y conserva la 1.
+- **Pendiente:** inicializar el restaurante en Neon (con autorización); migrar Personal, Semana, adelantos y sobres; Better Auth (`requireAccess`).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:
@@ -190,6 +202,7 @@ pnpm --filter @propinas/web build
 - No versionar datos reales (Excel con sueldos, `.env`, credenciales).
 - No agregar a los enums de la política opciones que GUTIP todavía no calcula. En Neon se verificó la **estructura** (objetos, checksum, sin drift), no el **comportamiento**: los triggers y la concurrencia se probaron en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
 - No correr `test:pg` apuntando a Neon ni a una base con datos (crea y borra bases).
+- No ejecutar `db:bootstrap` contra Neon ni activar `GUTIP_DATA_SOURCE=database` en un despliegue sin autorización explícita (antes de Better Auth, las acciones operan como el operador configurado).
 - No hacer `push` sin que el usuario lo pida, ni merge a `main` sin su aprobación.
 
 ## 10. Problemas y decisiones pendientes
@@ -234,12 +247,13 @@ Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**)
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada (CI en verde). La Fase 1 avanza como demo en el navegador; la política versionada ya tiene su esquema y su migración aplicada en Neon production (§6.3), sin datos de negocio.**
+**Cuando retomemos: la Fase 0 está cerrada (CI en verde). La Fase 1 migra pantalla por pantalla: "Configuración de distribución" ya usa la base (§6.4); el resto sigue en la demo. Neon production tiene el esquema pero ningún restaurante inicializado.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 82 + tip-engine 257), `pnpm test:db` (250), `pnpm test:pg` (19, PostgreSQL descartable), `pnpm --filter @propinas/web build`. Confirmar que el CI (job `postgres`) quedó en verde con la migración nueva.
+1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 91 + tip-engine 257), `pnpm test:db` (250), `pnpm test:pg` (33, PostgreSQL descartable en UTF8), `pnpm --filter @propinas/web build`. Confirmar que el CI quedó en verde.
 2. **Configuración de Library:** confirmar con el restaurante los parámetros pendientes (§10, pantalla "Configuración de distribución") y conseguir el `.xlsx` (P7). No son decisiones globales de GUTIP.
 3. ~~**Diseño de datos (Prisma)** de la política versionada~~ (hecho el 2026-09-26, §6.3). **Neon:** `20260926000000_distribution_policies` aplicada en production (2026-09-26); la branch de prueba `test-distribution-policies` se puede borrar desde la consola de Neon.
 4. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
-5. **Persistencia (solo con aprobación explícita):** plan de §11, empezando por M2 + Better Auth en local, sin tocar Neon. Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
+5. **Neon (solo con autorización):** inicializar el restaurante con `db:bootstrap --confirm --allow-remote`.
+6. **Persistencia (solo con aprobación explícita):** siguientes pantallas (Personal, Semana) y plan de §11 (Better Auth en local, sin tocar Neon). Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
 
 No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.

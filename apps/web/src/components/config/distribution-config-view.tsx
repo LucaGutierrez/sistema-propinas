@@ -8,7 +8,7 @@ import {
   InfoIcon,
   PlusIcon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { PositionBadge, toneOf } from '@/components/gutip/badges';
 import { FormulaCard } from '@/components/gutip/formula-card';
 import { LoadingState } from '@/components/gutip/loading';
@@ -25,17 +25,19 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PARAMS, type ParamDefinition } from '@/lib/demo-store/config';
-import type { Position, Venue } from '@/lib/demo-store/model';
+import type { Position } from '@/lib/demo-store/model';
 import {
-  currentVersion,
   paramOrigin,
   policyGaps,
   positionsCustomized,
   type PolicyOrigin,
   type PolicyVersion,
 } from '@/lib/demo-store/policy';
-import { addPosition, setConfigValue, setPositionFactor } from '@/lib/demo-store/policy-ops';
-import { newId, useDemoStore } from '@/lib/demo-store/store';
+import type {
+  DistributionConfigActions,
+  DistributionConfigView as View,
+  PolicyVersionView,
+} from '@/lib/policy/view';
 import { cn } from '@/lib/utils';
 
 const WHEN = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
@@ -57,22 +59,31 @@ const LIBRARY_CHECKS = [
   'El archivo Excel original (fórmulas, hojas 2 y 3) y algunas semanas más.',
 ];
 
-/** Cómo calcula este local: su política versionada (CONFIG-MODEL.md). */
-export function DistributionConfigPage() {
-  const { venue, perms } = useDemoStore();
-  if (!venue) return <LoadingState />;
-  const version = currentVersion(venue.policy);
+/**
+ * Cómo calcula este local: su política versionada (CONFIG-MODEL.md). No sabe de dónde vienen
+ * los datos: la demo (`demo-distribution-config.tsx`) y la base (`database-distribution-config.tsx`)
+ * le pasan el mismo modelo y las mismas acciones.
+ */
+export function DistributionConfigView({
+  view,
+  actions,
+}: {
+  view: View | null;
+  actions: DistributionConfigActions;
+}) {
+  if (!view) return <LoadingState />;
+  const version = view.current;
   const gaps = policyGaps(version);
   const customized =
     PARAMS.filter((p) => paramOrigin(version, p.key) === 'PERSONALIZADO').length +
     (positionsCustomized(version) ? 1 : 0);
-  const canEdit = perms.configureDistribution;
+  const canEdit = view.canEdit;
 
   return (
     <>
       <PageHeader
         title="Configuración de distribución"
-        description={`Cómo calcula las propinas ${venue.name}. Solo afecta a este local.`}
+        description={`Cómo calcula las propinas ${view.venueName}. Solo afecta a este local.`}
         actions={
           <>
             <Badge variant="outline" className="px-3 py-1 text-sm">
@@ -126,16 +137,22 @@ export function DistributionConfigPage() {
         </div>
       ) : null}
 
-      <PositionsEditor venue={venue} version={version} canEdit={canEdit} />
+      <PositionsEditor view={view} canEdit={canEdit} actions={actions} />
 
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
         {PARAMS.map((param) => (
-          <ParamCard key={param.key} version={version} param={param} canEdit={canEdit} />
+          <ParamCard
+            key={param.key}
+            version={version}
+            param={param}
+            canEdit={canEdit}
+            actions={actions}
+          />
         ))}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <VersionHistory venue={venue} />
+        <VersionHistory versions={view.versions} current={version.number} />
         <Card className="self-start">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -181,13 +198,15 @@ function ParamCard({
   version,
   param,
   canEdit,
+  actions,
 }: {
   version: PolicyVersion;
   param: ParamDefinition;
   canEdit: boolean;
+  actions: DistributionConfigActions;
 }) {
-  const { apply, viewAs } = useDemoStore();
   const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
   const current = version.values[param.key];
 
   return (
@@ -200,7 +219,7 @@ function ParamCard({
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        <fieldset className="space-y-2" disabled={!canEdit}>
+        <fieldset className="space-y-2" disabled={!canEdit || pending}>
           <legend className="sr-only">{param.label}</legend>
           {param.options.map((option) => {
             const selected = option.value === current;
@@ -221,17 +240,9 @@ function ParamCard({
                   checked={selected}
                   disabled={!option.supported}
                   onChange={() =>
-                    setError(
-                      apply((v) =>
-                        setConfigValue(
-                          v,
-                          param.key,
-                          option.value,
-                          viewAs?.name ?? 'Encargado',
-                          new Date().toISOString(),
-                        ),
-                      ),
-                    )
+                    startTransition(async () => {
+                      setError(await actions.setValue(param.key, option.value));
+                    })
                   }
                 />
                 <span className="min-w-0 flex-1">
@@ -268,34 +279,30 @@ function ParamCard({
 }
 
 function PositionsEditor({
-  venue,
-  version,
+  view,
   canEdit,
+  actions,
 }: {
-  venue: Venue;
-  version: PolicyVersion;
+  view: View;
   canEdit: boolean;
+  actions: DistributionConfigActions;
 }) {
-  const { apply, viewAs } = useDemoStore();
+  const version = view.current;
   const [name, setName] = useState('');
   const [factor, setFactor] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    const failure = apply((v) =>
-      addPosition(
-        v,
-        { id: newId('puesto'), name, factor },
-        viewAs?.name ?? 'Encargado',
-        new Date().toISOString(),
-      ),
-    );
-    setError(failure);
-    if (!failure) {
-      setName('');
-      setFactor('');
-    }
+    startTransition(async () => {
+      const failure = await actions.addPosition(name, factor);
+      setError(failure);
+      if (!failure) {
+        setName('');
+        setFactor('');
+      }
+    });
   }
 
   return (
@@ -319,8 +326,9 @@ function PositionsEditor({
             key={position.id}
             position={position}
             positions={version.positions}
-            people={venue.staff.filter((s) => s.active && s.positionId === position.id).length}
+            people={view.peopleByPosition[position.id] ?? 0}
             canEdit={canEdit}
+            actions={actions}
           />
         ))}
       </ul>
@@ -349,7 +357,7 @@ function PositionsEditor({
                 setError(null);
               }}
             />
-            <Button type="submit" variant="outline">
+            <Button type="submit" variant="outline" disabled={pending}>
               <PlusIcon />
               Agregar puesto
             </Button>
@@ -370,30 +378,26 @@ function PositionRow({
   positions,
   people,
   canEdit,
+  actions,
 }: {
   position: Position;
   positions: readonly Position[];
   people: number;
   canEdit: boolean;
+  actions: DistributionConfigActions;
 }) {
-  const { apply, viewAs } = useDemoStore();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(position.factor);
   const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    const failure = apply((v) =>
-      setPositionFactor(
-        v,
-        position.id,
-        value,
-        viewAs?.name ?? 'Encargado',
-        new Date().toISOString(),
-      ),
-    );
-    setError(failure);
-    if (!failure) setEditing(false);
+    startTransition(async () => {
+      const failure = await actions.setPortion(position.id, value);
+      setError(failure);
+      if (!failure) setEditing(false);
+    });
   }
 
   return (
@@ -415,7 +419,7 @@ function PositionRow({
             }}
             autoFocus
           />
-          <Button type="submit" size="sm">
+          <Button type="submit" size="sm" disabled={pending}>
             Guardar
           </Button>
           <Button
@@ -451,10 +455,14 @@ function PositionRow({
 }
 
 /** Todas las versiones de la política, y cuántas semanas cerradas usó cada una. */
-function VersionHistory({ venue }: { venue: Venue }) {
-  const versions = [...venue.policy.versions].sort((a, b) => b.number - a.number);
-  const closedBy = (number: number) =>
-    venue.weeks.filter((w) => w.status === 'CERRADA' && w.result?.policyVersion === number).length;
+function VersionHistory({
+  versions: all,
+  current,
+}: {
+  versions: readonly PolicyVersionView[];
+  current: number;
+}) {
+  const versions = [...all].sort((a, b) => b.number - a.number);
 
   return (
     <Card className="gap-0 self-start pb-0">
@@ -470,7 +478,7 @@ function VersionHistory({ venue }: { venue: Venue }) {
       </CardHeader>
       <ol className="divide-y border-t">
         {versions.map((version) => {
-          const closed = closedBy(version.number);
+          const closed = version.closedPeriods;
           return (
             <li key={version.number} className="px-5 py-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
@@ -478,9 +486,7 @@ function VersionHistory({ venue }: { venue: Venue }) {
                 <Badge variant="outline" className="text-muted-foreground">
                   {ORIGIN_LABEL[version.origin]}
                 </Badge>
-                {version.number === venue.policy.current ? (
-                  <Badge variant="success">Vigente</Badge>
-                ) : null}
+                {version.number === current ? <Badge variant="success">Vigente</Badge> : null}
                 <span className="ml-auto text-xs text-muted-foreground">
                   {closed} {closed === 1 ? 'semana cerrada' : 'semanas cerradas'}
                 </span>

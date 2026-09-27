@@ -4,7 +4,11 @@ packages:
 
 # pnpm bloquea los scripts de instalación por defecto. Solo se permiten estos paquetes
 # (Prisma descarga sus binarios de consulta/esquema durante la instalación).
+# esbuild (lo trae tsx, que corre `db:bootstrap`) queda explícitamente SIN script: usa el binario
+# precompilado de su paquete de plataforma. pnpm 12 exige decidirlo; sin esta línea,
+# `pnpm install --frozen-lockfile` falla con ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
+  esbuild: false
   prisma: true

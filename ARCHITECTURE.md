@@ -229,6 +229,19 @@ Vínculo entre niveles: `daily_distributions.settlement_id` (null hasta cerrar l
 
 **Inmutabilidad reforzada en tres capas:** servicios, triggers en PostgreSQL y política de "anular y rehacer". Un `CLOSED` no se edita nunca.
 
+### 6.1 Demo y base de datos durante la migración (Fase 1)
+
+La interfaz se pasa de la demo del navegador a la base **pantalla por pantalla**, sin romper la demo:
+
+- **Reglas puras compartidas** (`src/lib/policy/`): validaciones y resúmenes de los cambios de política, plantilla estándar (`gutip-standard` v1) y traducción entre las opciones de la pantalla y los enums de la base. Las usan la demo y el servicio, así que las reglas y mensajes son los mismos.
+- **Demo** (`src/lib/demo-store/`): sigue en `localStorage` y se usa si el servidor no tiene `GUTIP_DATA_SOURCE=database`.
+- **Base** (`src/server/`): `db.ts`, `context.ts`, `policy/repository.ts` (lecturas con `restaurantId`), `policy/service.ts` (escrituras transaccionales). Las acciones del servidor (`src/app/configuracion/actions.ts`) son la única puerta de la interfaz hacia el servicio.
+- **Interfaz**: una vista que no sabe de dónde vienen los datos (`distribution-config-view.tsx`) y un contenedor por fuente (`demo-distribution-config.tsx`, `database-distribution-config.tsx`). La vista solo presenta (estándar/personalizado, puntos por definir); no escribe ni valida cambios.
+
+Estado: **"Configuración de distribución" ya lee y escribe la base**; el resto de las pantallas (personal, semana, adelantos, sobres, historial, acceso) siguen en la demo. Detalle en `DATABASE.md` §11.
+
+Deuda conocida: el catálogo de parámetros (`demo-store/config.ts`) y las funciones puras de la política (`demo-store/policy.ts`: tipos, puntos por definir, estándar/personalizado) todavía viven bajo `demo-store/`. No usan el navegador; conviene moverlos a `src/lib/policy/` cuando se retire la demo.
+
 ---
 
 ## 7. Motor de cálculo (`packages/tip-engine`)
@@ -355,6 +368,8 @@ computeWeeklySettlement(days: { date: string; distributionId: string;
 Con esos volúmenes (una cuenta por restaurante, unos pocos emails por usuario) la capa gratuita alcanza con margen. Lo único que requiere una acción tuya es **tener un dominio** (o aceptar un remitente compartido con menor entregabilidad) y crear la cuenta en el proveedor elegido.
 
 **Autorización:** cada request resuelve `session.user` + `membership` del restaurante activo; toda Server Action llama a `can(membership, action)`. Los repositorios exigen `restaurantId` (nunca se lee un registro solo por `id`).
+
+**Mientras no haya sesión (Fase 1):** el restaurante y el operador salen de variables de entorno del servidor (`GUTIP_RESTAURANT_ID`, `GUTIP_OPERATOR_EMAIL`) y `resolveAccess()` verifica la membresía en la base; editar la política exige `OWNER` o `ADMIN`, como en la matriz. Es solo para desarrollo local. Con Better Auth, `requireAccess(restaurantId, capacidad)` reemplaza a `configuredOperator()` + `resolveAccess()` sin cambiar repositorios ni servicios.
 
 | Acción | OWNER | ADMIN | MANAGER (encargado) | VIEWER |
 |---|---|---|---|---|
