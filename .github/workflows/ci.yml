@@ -27,6 +27,14 @@ jobs:
       - name: Lint (incluye las reglas de pureza del motor)
         run: pnpm lint
 
+      # El cliente de Prisma no se genera en la instalación: la app importa sus tipos, así que
+      # tiene que existir antes del typecheck y de los tests.
+      - name: Prisma validate
+        run: pnpm prisma validate
+
+      - name: Prisma generate
+        run: pnpm prisma generate
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -37,12 +45,6 @@ jobs:
       # No reemplaza probar contra un PostgreSQL real: ver DATABASE.md §10.
       - name: Tests de base de datos (PGlite)
         run: pnpm test:db
-
-      - name: Prisma validate
-        run: pnpm prisma validate
-
-      - name: Prisma generate
-        run: pnpm prisma generate
 
       # El motor de cálculo no puede tener dependencias de runtime.
       - name: tip-engine sin dependencias
@@ -79,6 +81,11 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Los tests del servicio importan el cliente de Prisma: generarlo antes (no se conecta
+      # y no necesita DATABASE_URL).
+      - name: Prisma generate
+        run: pnpm prisma generate
 
       - name: Tests de migraciones y concurrencia (PostgreSQL 18)
         run: pnpm test:pg
