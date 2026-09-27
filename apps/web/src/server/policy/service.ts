@@ -311,14 +311,22 @@ export interface BootstrapResult {
   created: { user: boolean; restaurant: boolean; membership: boolean; policy: boolean };
 }
 
+/** Falla de negocio dentro del bootstrap: se lanza para que Prisma revierta la transacción. */
+class BootstrapAborted extends Error {}
+
 /**
  * Inicializa un restaurante de desarrollo: operador (usuario + membresía OWNER), restaurante y
  * política estándar v1 con sus puestos. IDEMPOTENTE: lo que ya existe no se toca ni se duplica
  * (volver a correrlo no crea nada). No crea personal ni datos de períodos.
+ *
+ * TODO O NADA: una transacción interactiva de Prisma solo se revierte si algo se lanza, así que
+ * una política que no se puede crear se lanza (y se devuelve como error fuera de la transacción)
+ * en vez de devolverse adentro, donde quedarían el usuario, el restaurante y la membresía.
  */
 export async function bootstrapRestaurant(
   db: PrismaClient,
   input: BootstrapInput,
+  template: PolicyTemplate = STANDARD_TEMPLATE,
 ): Promise<ServiceResult<BootstrapResult>> {
   const email = input.operatorEmail.trim().toLowerCase();
   const restaurantName = input.restaurantName.trim();
@@ -326,48 +334,53 @@ export async function bootstrapRestaurant(
   if (!email.includes('@')) return fail('El email del operador no es válido.');
   if (restaurantName === '' || operatorName === '') return fail('Faltan nombres.');
 
-  return db.$transaction(async (tx) => {
-    const created = { user: false, restaurant: false, membership: false, policy: false };
+  try {
+    return await db.$transaction(async (tx) => {
+      const created = { user: false, restaurant: false, membership: false, policy: false };
 
-    let user = await tx.user.findUnique({ where: { email }, select: { id: true } });
-    if (!user) {
-      user = await tx.user.create({ data: { email, name: operatorName }, select: { id: true } });
-      created.user = true;
-    }
+      let user = await tx.user.findUnique({ where: { email }, select: { id: true } });
+      if (!user) {
+        user = await tx.user.create({ data: { email, name: operatorName }, select: { id: true } });
+        created.user = true;
+      }
 
-    const restaurant = await tx.restaurant.findUnique({
-      where: { id: input.restaurantId },
-      select: { id: true },
-    });
-    if (!restaurant) {
-      await tx.restaurant.create({ data: { id: input.restaurantId, name: restaurantName } });
-      created.restaurant = true;
-    }
-
-    const membership = await tx.membership.findUnique({
-      where: { userId_restaurantId: { userId: user.id, restaurantId: input.restaurantId } },
-      select: { id: true },
-    });
-    if (!membership) {
-      await tx.membership.create({
-        data: { userId: user.id, restaurantId: input.restaurantId, role: 'OWNER' },
+      const restaurant = await tx.restaurant.findUnique({
+        where: { id: input.restaurantId },
+        select: { id: true },
       });
-      created.membership = true;
-    }
+      if (!restaurant) {
+        await tx.restaurant.create({ data: { id: input.restaurantId, name: restaurantName } });
+        created.restaurant = true;
+      }
 
-    const actor = { restaurantId: input.restaurantId, userId: user.id };
-    const locked = await lockRestaurant(tx, input.restaurantId);
-    let versionId = locked?.currentPolicyVersionId ?? null;
-    if (!versionId) {
-      const policy = await createTemplatePolicyInTx(tx, actor);
-      if (!policy.ok) return policy;
-      versionId = policy.value.versionId;
-      created.policy = true;
-    }
+      const membership = await tx.membership.findUnique({
+        where: { userId_restaurantId: { userId: user.id, restaurantId: input.restaurantId } },
+        select: { id: true },
+      });
+      if (!membership) {
+        await tx.membership.create({
+          data: { userId: user.id, restaurantId: input.restaurantId, role: 'OWNER' },
+        });
+        created.membership = true;
+      }
 
-    return {
-      ok: true,
-      value: { restaurantId: input.restaurantId, userId: user.id, versionId, created },
-    };
-  }, TX_OPTIONS);
+      const actor = { restaurantId: input.restaurantId, userId: user.id };
+      const locked = await lockRestaurant(tx, input.restaurantId);
+      let versionId = locked?.currentPolicyVersionId ?? null;
+      if (!versionId) {
+        const policy = await createTemplatePolicyInTx(tx, actor, template);
+        if (!policy.ok) throw new BootstrapAborted(policy.error);
+        versionId = policy.value.versionId;
+        created.policy = true;
+      }
+
+      return {
+        ok: true,
+        value: { restaurantId: input.restaurantId, userId: user.id, versionId, created },
+      };
+    }, TX_OPTIONS);
+  } catch (error) {
+    if (error instanceof BootstrapAborted) return fail(error.message);
+    throw error;
+  }
 }

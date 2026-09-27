@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { STANDARD_VALUES } from '@/lib/demo-store/config';
+import { valuesToColumns } from '@/lib/policy/db-mapping';
+import { STANDARD_TEMPLATE } from '@/lib/policy/standard';
 import { AccessError, resolveAccess } from '@/server/context';
 import {
   countClosedPeriodsByVersion,
@@ -118,6 +120,80 @@ describe('bootstrap del restaurante', () => {
     const rid = input.restaurantId;
     expect(await db.distributionPolicyVersion.count({ where: { restaurantId: rid } })).toBe(1);
     expect(await db.position.count({ where: { restaurantId: rid } })).toBe(4);
+  });
+
+  it('si la política no se puede crear, no queda ni el usuario ni la membresía (todo o nada)', async () => {
+    // Restaurante con una versión huérfana (sin puntero vigente): la política no se puede crear.
+    const rid = randomUUID();
+    await db.$transaction(async (tx) => {
+      const author = await tx.user.create({
+        data: { email: `autor-${randomUUID()}@example.invalid`, name: 'Autor' },
+      });
+      await tx.restaurant.create({ data: { id: rid, name: 'Huérfano' } });
+      const position = await tx.position.create({ data: { restaurantId: rid, name: 'Barra' } });
+      const version = await tx.distributionPolicyVersion.create({
+        data: {
+          restaurantId: rid,
+          number: 1,
+          origin: 'STANDARD',
+          templateCode: STANDARD_TEMPLATE.code,
+          templateVersion: STANDARD_TEMPLATE.version,
+          summary: 'huérfana',
+          ...valuesToColumns(STANDARD_VALUES, 1),
+          createdById: author.id,
+        },
+      });
+      await tx.policyVersionPosition.create({
+        data: { versionId: version.id, positionId: position.id, portion: '0.02', sortOrder: 0 },
+      });
+    }, TX_OPTIONS);
+
+    const operatorEmail = `op-${randomUUID()}@example.invalid`;
+    const result = await bootstrapRestaurant(db, {
+      restaurantId: rid,
+      restaurantName: 'Otro nombre',
+      operatorEmail,
+      operatorName: 'Operador',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'El restaurante tiene versiones de política pero ninguna vigente: revisar a mano.',
+    });
+    expect(await db.user.count({ where: { email: operatorEmail } })).toBe(0);
+    expect(await db.membership.count({ where: { restaurantId: rid } })).toBe(0);
+    expect(await db.restaurant.findUniqueOrThrow({ where: { id: rid } })).toMatchObject({
+      name: 'Huérfano',
+      currentPolicyVersionId: null,
+    });
+    expect(await db.distributionPolicyVersion.count({ where: { restaurantId: rid } })).toBe(1);
+    expect(await db.position.count({ where: { restaurantId: rid } })).toBe(1);
+  });
+
+  it('si la política falla a mitad de camino, no queda usuario, restaurante, membresía ni puestos', async () => {
+    const input = {
+      restaurantId: randomUUID(),
+      restaurantName: 'Nuevo',
+      operatorEmail: `op-${randomUUID()}@example.invalid`,
+      operatorName: 'Operador',
+    };
+    // El primer puesto se escribe; la porción "0" del segundo hace fallar la política.
+    const broken = {
+      ...STANDARD_TEMPLATE,
+      positions: [
+        { name: 'Cocina', factor: '0,01' },
+        { name: 'Bacha', factor: '0' },
+      ],
+    };
+
+    await expect(bootstrapRestaurant(db, input, broken)).rejects.toThrow('Porción inválida');
+
+    const rid = input.restaurantId;
+    expect(await db.user.count({ where: { email: input.operatorEmail } })).toBe(0);
+    expect(await db.restaurant.count({ where: { id: rid } })).toBe(0);
+    expect(await db.membership.count({ where: { restaurantId: rid } })).toBe(0);
+    expect(await db.position.count({ where: { restaurantId: rid } })).toBe(0);
+    expect(await db.distributionPolicyVersion.count({ where: { restaurantId: rid } })).toBe(0);
   });
 });
 
