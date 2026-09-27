@@ -48,7 +48,7 @@ Encima de los tres conceptos está la **política de distribución** (`distribut
 
 | Enum | Valores |
 |---|---|
-| `MembershipRole` | `OWNER`, `ADMIN`, `MANAGER`, `VIEWER` |
+| `MembershipRole` | `OWNER`, `MANAGER`, `EDITOR`, `VIEWER`, `SELF` |
 | `Currency` | `ARS`, `USD` |
 | `RateSource` | `MANUAL`, `API` |
 | `DailyDistributionStatus` | `DRAFT`, `CLOSED`, `VOIDED` |
@@ -107,19 +107,28 @@ users ──< memberships >── restaurants ──── current_policy_versio
 
 ### 4.1 Identidad y acceso
 
-**users** — `id, email (unique, minúsculas), name, password_hash (null si solo OAuth), email_verified_at, password_changed_at`.
+**users** — `id, email (unique; CHECK minúsculas), name, email_verified bool (default false), image null, password_hash, email_verified_at, password_changed_at`.
+Better Auth la usa como su modelo `user` (`name`, `email`, `emailVerified`, `image`, `createdAt`, `updatedAt`): **no hay una tabla de usuarios paralela**. La contraseña vive en `accounts`. `password_hash`, `email_verified_at` y `password_changed_at` son del diseño anterior: sin uso (y sin datos); se limpian en una migración futura.
 
-**auth_tokens** — verificación de email y recuperación de contraseña
+**sessions** (Better Auth `session`) — `id, user_id FK (CASCADE), token (unique), expires_at, ip_address, user_agent, created_at, updated_at`. La cookie lleva el token firmado; cerrar sesión o revocar = borrar la fila.
+
+**accounts** (Better Auth `account`) — `id, user_id FK (CASCADE), account_id, provider_id, password null, access_token, refresh_token, id_token, access_token_expires_at, refresh_token_expires_at, scope, created_at, updated_at` · unique `(provider_id, account_id)`. Email y contraseña: `provider_id = 'credential'`, `account_id = users.id`, `password` = hash scrypt.
+
+**verifications** (Better Auth `verification`) — `id, identifier, value, expires_at, created_at, updated_at` · índice `(identifier)`. Tokens de verificación de email y reset (sin uso hasta tener `Mailer`).
+
+**auth_rate_limits** (Better Auth `rateLimit`) — `id, key (unique: "ip|ruta"), count (CHECK ≥ 0), last_request bigint (ms)`. Límite de intentos compartido entre instancias.
+
+**auth_tokens** — *(diseño anterior a Better Auth, sin uso; reemplazada por `verifications`)* verificación de email y recuperación de contraseña
 `id, user_id FK, type AuthTokenType, token_hash text (SHA-256 del token; el token en claro solo viaja por email), expires_at, used_at null, created_at` · índice `(token_hash)`, `(user_id, type)`.
 Un solo uso (`used_at`), expiración corta (reset: 1 h; verificación: 24 h), al emitir uno nuevo se invalidan los anteriores del mismo tipo. Al restablecer la contraseña se actualiza `password_changed_at` y se invalidan las sesiones anteriores.
 
-**rate_limits** — límite de intentos (login, registro, reenvío de emails, reset)
+**rate_limits** — *(diseño anterior, sin uso; reemplazada por `auth_rate_limits`)* límite de intentos (login, registro, reenvío de emails, reset)
 `key text (ej. 'login:ip:1.2.3.4'), window_start timestamptz, count int` · PK `(key, window_start)`. Vive en Postgres porque en un entorno serverless la memoria no se comparte entre invocaciones.
 
 **restaurants** — `id, name, timezone (default 'America/Argentina/Buenos_Aires'), current_policy_version_id FK distribution_policy_versions null, archived_at`.
 El restaurante **no guarda parámetros de cálculo** (el inicio de semana y el modo de pozo pasaron a la política). `current_policy_version_id` es la versión vigente: la que toman los períodos nuevos. Es `NULL` solo mientras se crea el restaurante (la versión necesita el restaurante); trigger `fn_restaurants_current_policy`: la versión tiene que ser del mismo restaurante y, una vez asignada, no vuelve a `NULL`.
 
-**memberships** — `id, user_id, restaurant_id, role MembershipRole` · unique `(user_id, restaurant_id)`. MVP: solo `OWNER` operativo; el resto de roles ya existe en el modelo.
+**memberships** — `id, user_id, restaurant_id, role MembershipRole, employee_id FK employees null` · unique `(user_id, restaurant_id)`. Es la **fuente de la autorización** (ARCHITECTURE.md §9). Reglas en la base: un solo `OWNER` por restaurante (`ux_memberships_one_owner`); `SELF` exige empleado (`ck_memberships_self_employee`); un empleado se vincula a lo sumo a una membresía (`ux_memberships_employee`); el empleado es del mismo restaurante (trigger `fn_memberships_employee_same_restaurant`) y un empleado vinculado no cambia de restaurante (`fn_employees_linked_membership_restaurant`). Un usuario con membresías no se puede borrar (RESTRICT).
 
 ### 4.2 Catálogos
 
@@ -348,7 +357,7 @@ Las columnas `delivered_*` reflejan el **estado actual**: al revertir una entreg
 | from_status / to_status | PaymentStatus null / PaymentStatus | |
 | amount_cents | bigint | importe del sobre en ese momento |
 | performed_by | uuid FK users | quién ejecutó la acción |
-| authorized_by | uuid FK users null | quién autorizó (obligatorio en `DELIVERY_REVERTED`; hoy coincide con `performed_by` porque la autorización es por rol `OWNER`/`ADMIN`) |
+| authorized_by | uuid FK users null | quién autorizó (obligatorio en `DELIVERY_REVERTED`; hoy coincide con `performed_by` porque la autorización es por rol `OWNER`/`MANAGER`) |
 | reason | text null | **obligatorio (mín. 10 caracteres)** en `DELIVERY_REVERTED`, `VOIDED` y `PREPARATION_UNDONE` |
 | occurred_at | timestamptz | hora del servidor |
 
@@ -421,7 +430,7 @@ Una distribución diaria `CLOSED` es inmutable. Se refuerza en **tres capas**:
 **Corrección tras una entrega (flujo completo, nada se modifica en silencio):**
 ```
 Sobre DELIVERED
- → 1. Autorización: solo OWNER/ADMIN (permiso payments.revert)
+ → 1. Autorización: solo OWNER/MANAGER (permiso payments.revert)
  → 2. Reversión de la entrega: DELIVERED → PREPARED
         · motivo obligatorio · evento DELIVERY_REVERTED (authorized_by) · fila en audit_log
         · se limpian delivered_at/by (y delivery_note) en la fila; el evento DELIVERED original se conserva
@@ -525,8 +534,9 @@ Bandeja de sobres de la semana: Roro → $516.447 · Leo → $623.450 · Marcos 
 
 ## 10. Migraciones y seed
 
-- Migraciones Prisma versionadas. `CHECK`, índices únicos parciales/por expresión y **triggers de inmutabilidad** se agregan como SQL dentro de la migración (Prisma no los modela). En `apps/web/prisma/sql/`: `constraints.sql` es el **conjunto vigente** (lo usan los tests); `0001_constraints.sql` y `0002_distribution_policies.sql` son los deltas que embebe cada migración (congelados una vez aplicados).
+- Migraciones Prisma versionadas. `CHECK`, índices únicos parciales/por expresión y **triggers de inmutabilidad** se agregan como SQL dentro de la migración (Prisma no los modela). En `apps/web/prisma/sql/`: `constraints.sql` es el **conjunto vigente** (lo usan los tests); `0001_constraints.sql`, `0002_distribution_policies.sql` y `0003_auth.sql` son los deltas que embebe cada migración (congelados una vez aplicados).
 - **Migración `20260926000000_distribution_policies`:** guarda explícita (falla con `MIGRATION GUARD` si hay filas en `restaurants`, `positions`, `daily_distributions`, `tip_entries`, `advances`, `weekly_settlements` o `weekly_payments`: cambia columnas y tipos que no tienen conversión sin datos de la política), borra el trigger anti-mezcla, DDL de Prisma (`prisma migrate diff` desde el esquema anterior) y copia literal de `sql/0002_distribution_policies.sql` (que crea la extensión `btree_gist` con `IF NOT EXISTS` para la restricción de exclusión; en Neon está en la lista de extensiones permitidas). Probada en PGlite (`test:db`) y con `prisma migrate deploy` sobre PostgreSQL 18 real (`test:pg`, `migrate diff` vacío). **Aplicada en Neon production** (ver "Estado en Neon" más abajo).
+- **Migración `20260928000000_auth` (Fase 2, NO aplicada en Neon):** no destructiva. Guarda explícita (`MIGRATION GUARD` si hay membresías `ADMIN` o emails con mayúsculas: no borra ni reasigna nada por su cuenta) → DDL de Prisma: `membership_role` pasa a `OWNER, MANAGER, EDITOR, VIEWER, SELF` (conversión por texto: las filas existentes conservan su rol), `users.email_verified` (default false) e `image`, `memberships.employee_id`, tablas `sessions`, `accounts`, `verifications`, `auth_rate_limits` → `email_verified = true` donde había `email_verified_at` → copia literal de `sql/0003_auth.sql`. Probada: en PGlite (`test:db`: mismo catálogo que `constraints.sql`; conserva usuario y membresía; guardas), con `prisma migrate deploy` sobre PostgreSQL 18 (`test:pg`, `migrate diff` vacío) y sobre una base local con **los mismos datos que Neon** (usuario sin contraseña, restaurante, OWNER, v1 y v2): tras migrar, mismas filas e ids, v2 vigente, Salón 0,022 → 0,025, `migrate status` al día y `migrate diff` vacío.
 - **Migración inicial:** `apps/web/prisma/migrations/20260925000000_init/migration.sql` = DDL generado por Prisma (`prisma migrate diff --from-empty`, sin editar) + copia literal de `sql/0001_constraints.sql` al final. Una migración aplicada no se edita: cualquier cambio posterior va en una migración nueva. `test-db/migrations.test.ts` verifica que la migración contiene el SQL de restricciones y que aplicar las migraciones en orden produce exactamente el mismo catálogo (columnas, restricciones, índices, triggers, funciones y enums) que la base usada por los demás tests.
 - **Verificación de la migración (sin Neon):** se aplicó con `prisma migrate deploy` sobre un PostgreSQL 18.3 local y temporal (PGlite por socket) y `prisma migrate diff` desde esa base hacia `schema.prisma` resultó **vacío**: Prisma no intenta eliminar los índices parciales/por expresión, los CHECK ni los triggers. Desde 2026-09-25 lo mismo se comprueba en cada corrida de `pnpm test:pg` sobre un PostgreSQL real (ver abajo). La migración inicial está **aplicada en Neon** (PostgreSQL 18.6) y verificada sin drift el 2026-09-26.
 - **Estado de verificación (Fase 0):** el esquema Prisma pasó `prisma validate` y `prisma generate`. Los tests de base de datos (`pnpm test:db`, carpeta `apps/web/test-db/`, también en el CI) ejecutan el DDL que Prisma genera desde `schema.prisma` (`prisma migrate diff`, sin duplicar tablas a mano) más `0001_constraints.sql` sobre **PGlite** (hoy: DDL + `constraints.sql`), y comprueban CHECK, índices únicos (incl. parciales y por expresión), claves foráneas, triggers de inmutabilidad, estados de distribución/liquidación/sobre, adelantos y bitácoras de solo inserción. No reimplementan reglas de negocio: insertan filas y verifican que PostgreSQL las acepta o rechaza. Cada test corre en una transacción que se revierte.
@@ -560,7 +570,7 @@ Primera pantalla con persistencia real: **"Configuración de distribución"**. L
 
 **Capas** (`apps/web/src/server/`, solo servidor; ningún componente de la interfaz importa Prisma):
 - `db.ts`: cliente Prisma (conexión desde `DATABASE_URL`, nunca en el código).
-- `context.ts`: contexto de acceso (restaurante + operador), ver abajo.
+- `auth/`: Better Auth (`auth.ts`), sesión del pedido (`session.ts`) y contraseña de usuarios existentes (`credentials.ts`). `access/`: `requireAccess` (sesión + membresía + rol), matriz de roles y alcance de SELF. `context.ts`: solo el switch de fuente de datos.
 - `policy/repository.ts`: **lecturas**, todas con `restaurantId` en el filtro: restaurante, versión vigente, una versión con sus puestos y porciones, historial, períodos `CLOSED` por versión y personas activas por puesto. Las porciones `NUMERIC(20,10)` se convierten a texto exacto (sin floats).
 - `policy/service.ts`: **escrituras**, cada una en **una transacción** que empieza con `SELECT … FROM restaurants … FOR UPDATE` (dos cambios simultáneos se ordenan: versiones 2 y 3 encadenadas, probado en `test:pg`):
   - *Cambiar un parámetro, agregar un puesto o cambiar una porción*: inserta la versión `n + 1` (`CHANGE`, `previous_version_id`, `summary`, `created_by`) con **todos** sus puestos, actualiza `restaurants.current_policy_version_id` y pasa cada período `OPEN` que no reemplaza a otro (`supersedes_settlement_id IS NULL`) a la versión nueva, con su fila automática en `period_policy_changes`. Un período reabierto (revisión que reemplaza a otra) conserva su versión. Nunca hace `UPDATE` de una versión (además, la base lo rechaza).
@@ -569,15 +579,17 @@ Primera pantalla con persistencia real: **"Configuración de distribución"**. L
   - Las validaciones y mensajes son las mismas funciones puras que usa la demo (`src/lib/policy/changes.ts`).
 - `app/configuracion/actions.ts`: acciones del servidor. Resuelven el acceso en cada llamada (el navegador nunca manda el restaurante ni el usuario) y llaman al servicio.
 
-**Fuente de datos y contexto (antes de Better Auth).** Sin `GUTIP_DATA_SOURCE=database` la pantalla usa la demo y no toca la base. Con esa variable, el servidor toma el restaurante de `GUTIP_RESTAURANT_ID` y el operador de `GUTIP_OPERATOR_EMAIL`, y verifica en la base que el operador sea **miembro** de ese restaurante (`memberships`). Puede editar si su rol es `OWNER` o `ADMIN` (matriz de `ARCHITECTURE.md` §9). Es solo para desarrollo: **no se activa en un despliegue** hasta que exista la sesión, porque las acciones del servidor operan como ese operador.
+**Fuente de datos y acceso (Fase 2).** Sin `GUTIP_DATA_SOURCE=database` la pantalla usa la demo y no toca la base. Con esa variable exige **sesión** (Better Auth) y resuelve el acceso con `requireAccess`/`resolveAccess`: restaurante activo del usuario verificado contra `memberships`, rol que puede ver (OWNER, MANAGER, EDITOR, VIEWER) y, para cambiar, rol que puede configurar (OWNER, MANAGER). Las acciones del servidor vuelven a verificar todo en cada llamada (`server/policy/commands.ts`). `GUTIP_OPERATOR_EMAIL` y `GUTIP_RESTAURANT_ID` ya **no** intervienen en la autorización: solo los usa `db:bootstrap`.
 
 **Bootstrap (`pnpm --filter @propinas/web db:bootstrap --confirm`)**, `apps/web/scripts/bootstrap-restaurant.ts`, idempotente, en una transacción:
-- usuario operador (`GUTIP_OPERATOR_EMAIL` / `GUTIP_OPERATOR_NAME`) si no existe;
+- usuario dueño (`GUTIP_OPERATOR_EMAIL` / `GUTIP_OPERATOR_NAME`) si no existe (si existe se reutiliza: nunca se duplica); queda compatible con Better Auth pero **sin contraseña**;
 - restaurante `GUTIP_RESTAURANT_ID` (`GUTIP_RESTAURANT_NAME`) si no existe;
-- membresía `OWNER` del operador si no existe;
+- membresía `OWNER` del dueño si no existe (si el restaurante ya tiene **otro** dueño, falla sin crear nada);
 - si el restaurante no tiene política: versión 1 `STANDARD` (`template_code = 'gutip-standard'`, `template_version = 1`, lunes como inicio) con los puestos estándar Supervisor 0,014 · Barra 0,022 · Salón 0,022 · Bacha 0,007, y `current_policy_version_id`.
 No crea personal, períodos ni datos de negocio. Exige `--confirm`; se niega con `NODE_ENV=production`; contra una base no local exige `--allow-remote`; nunca imprime la URL ni el host (ante un error muestra solo el tipo). Probado en PostgreSQL local; **Neon todavía no fue inicializado**.
 
-**Cuando exista la sesión (Better Auth):** `configuredOperator()` + `resolveAccess()` se reemplazan por `requireAccess(restaurantId, capacidad)` en la página y en las acciones; el repositorio y el servicio no cambian (ya reciben `restaurantId` y el usuario como parámetros).
+**Contraseña del dueño (`pnpm --filter @propinas/web db:operator-password --confirm [--allow-remote] [--reset]`)**, `apps/web/scripts/operator-password.ts`: agrega la cuenta `credential` (hash scrypt de Better Auth) al usuario **existente** de `GUTIP_OPERATOR_EMAIL`; no crea usuarios. La contraseña se pide por teclado sin eco (o por stdin), nunca en argumentos ni variables. Si ya tiene contraseña exige `--reset`, que además cierra sus sesiones. Mismas protecciones que `db:bootstrap`. Es el camino del dueño que ya existe en Neon hacia el login, sin duplicarlo.
 
 **Tests:** `test:pg` (`test-pg/policy-service.test.ts`, con Prisma contra PostgreSQL real): bootstrap estándar e idempotente (también dos a la vez), lectura de la vigente, versión nueva al cambiar porción/parámetro/puesto, versión anterior inmutable, puntero actualizado, historial con períodos cerrados, puesto estable con porción distinta entre versiones, renombrar sin versión, transacción revertida sin restos, cambios simultáneos encadenados, período abierto vs. reabierto con `period_policy_changes`, y aislamiento entre restaurantes (ids de otro restaurante rechazados, acceso sin membresía rechazado).
+
+**Tests de acceso (Fase 2):** `test-pg/access.test.ts` — sin sesión (UNAUTHENTICATED), autenticado sin membresía / restaurante inexistente / id mal formado / archivado (NOT_FOUND), contexto tipado, cada rol en Configuración (OWNER y MANAGER ven y cambian; EDITOR y VIEWER ven, cambiar = FORBIDDEN sin escribir nada; SELF no ve), acción del servidor sin permiso llamada directo, otro restaurante (404 aunque se conozca el id; puesto ajeno rechazado), usuario en varios restaurantes con roles distintos, restaurante activo por cookie solo si es miembro, SELF limitado a su empleado, alta de restaurante con OWNER automático, OWNER único y bootstrap sin segundo dueño. `test-pg/auth.test.ts` — Better Auth de punta a punta sobre nuestras tablas: dueño de db:bootstrap sin contraseña → `db:operator-password` → login con el MISMO usuario → sesión → acceso real; reset que cierra sesiones; cookie httpOnly/SameSite=Lax (Secure solo en producción); cookie manipulada; logout borra la sesión; registro público deshabilitado; CSRF (cookie desde otro origen → 403); límite de intentos por IP. `test-db/access.test.ts` — restricciones de memberships y tablas de Better Auth en la base.

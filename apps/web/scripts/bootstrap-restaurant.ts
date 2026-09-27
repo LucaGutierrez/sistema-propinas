@@ -1,7 +1,8 @@
 /**
- * Inicializa un restaurante de desarrollo en la base de DATABASE_URL: operador (usuario +
- * membresía OWNER), restaurante y política estándar v1 con sus puestos y porciones.
+ * Inicializa un restaurante en la base de DATABASE_URL: dueño (usuario + membresía OWNER),
+ * restaurante y política estándar v1 con sus puestos y porciones.
  * IDEMPOTENTE: correrlo otra vez no crea ni duplica nada. No crea personal ni períodos.
+ * TODO O NADA: si algo falla, no queda nada creado.
  *
  * NO es un seed automático: no está registrado como `prisma db seed` (que `migrate dev/reset`
  * correrían solos) y se ejecuta únicamente a mano:
@@ -9,49 +10,33 @@
  *   pnpm --filter @propinas/web db:bootstrap --confirm [--allow-remote]
  *
  * Datos (variables de entorno o apps/web/.env; nunca en el código):
- *   GUTIP_RESTAURANT_ID    uuid del restaurante (el mismo que usa la app en GUTIP_RESTAURANT_ID)
+ *   GUTIP_RESTAURANT_ID    uuid del restaurante
  *   GUTIP_RESTAURANT_NAME  nombre del restaurante
- *   GUTIP_OPERATOR_EMAIL   email del usuario operador (el mismo que GUTIP_OPERATOR_EMAIL)
- *   GUTIP_OPERATOR_NAME    nombre del operador
+ *   GUTIP_OPERATOR_EMAIL   email del dueño (si ya existe ese usuario, se reutiliza: nunca se duplica)
+ *   GUTIP_OPERATOR_NAME    nombre del dueño
+ *
+ * El usuario queda listo para Better Auth (misma tabla `users`) pero SIN contraseña: para poder
+ * iniciar sesión se le define después con `db:operator-password` (se pide por teclado).
+ * La aplicación ya no usa estas variables para autorizar: usa la sesión y las membresías.
  *
  * Protecciones: exige --confirm; se niega con NODE_ENV=production; contra una base que no sea
  * local (p. ej. Neon) exige además --allow-remote. Nunca imprime la URL ni el host.
  */
-import { existsSync } from 'node:fs';
 import { PrismaClient } from '@prisma/client';
 import { bootstrapRestaurant } from '@/server/policy/service';
+import { createStop, guardDatabaseScript, reportFailure } from './lib/cli';
 
+const COMMAND = 'db:bootstrap';
 const args = new Set(process.argv.slice(2));
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const stop: (message: string) => never = createStop(COMMAND);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function stop(message: string): never {
-  console.error(`db:bootstrap: ${message}`);
-  process.exit(1);
-}
-
 async function main() {
-  if (existsSync('.env')) process.loadEnvFile('.env'); // no pisa variables ya definidas
-
-  if (process.env.NODE_ENV === 'production') stop('no se ejecuta con NODE_ENV=production.');
-  if (!args.has('--confirm')) {
-    stop('no se ejecutó: agregá --confirm para inicializar el restaurante (es idempotente).');
-  }
-
-  const url = process.env.DATABASE_URL;
-  if (!url) stop('falta DATABASE_URL.');
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    stop('DATABASE_URL no es una URL válida.');
-  }
-  const local = LOCAL_HOSTS.has(host);
-  if (!local && !args.has('--allow-remote')) {
-    stop(
-      'DATABASE_URL apunta a una base remota (no local). Si es lo que querés, agregá --allow-remote.',
-    );
-  }
+  const { local } = guardDatabaseScript(
+    args,
+    stop,
+    'para inicializar el restaurante (es idempotente)',
+  );
 
   const input = {
     restaurantId: process.env.GUTIP_RESTAURANT_ID?.trim() ?? '',
@@ -64,9 +49,7 @@ async function main() {
   if (!input.operatorEmail) stop('falta GUTIP_OPERATOR_EMAIL.');
   if (!input.operatorName) stop('falta GUTIP_OPERATOR_NAME.');
 
-  console.log(
-    `db:bootstrap: base ${local ? 'local' : 'remota'}; restaurante ${input.restaurantId}`,
-  );
+  console.log(`${COMMAND}: base ${local ? 'local' : 'remota'}; restaurante ${input.restaurantId}`);
   const db = new PrismaClient();
   try {
     const result = await bootstrapRestaurant(db, input);
@@ -77,17 +60,20 @@ async function main() {
       .map(([what]) => what);
     console.log(
       made.length > 0
-        ? `db:bootstrap: creado: ${made.join(', ')}. Política vigente: ${versionId}.`
-        : `db:bootstrap: ya estaba inicializado; no se creó nada. Política vigente: ${versionId}.`,
+        ? `${COMMAND}: creado: ${made.join(', ')}. Política vigente: ${versionId}.`
+        : `${COMMAND}: ya estaba inicializado; no se creó nada. Política vigente: ${versionId}.`,
     );
+    const password = await db.account.count({
+      where: { userId: result.value.userId, providerId: 'credential' },
+    });
+    if (password === 0) {
+      console.log(
+        `${COMMAND}: el dueño todavía no tiene contraseña. Definila con: pnpm --filter @propinas/web db:operator-password --confirm${local ? '' : ' --allow-remote'}`,
+      );
+    }
   } finally {
     await db.$disconnect();
   }
 }
 
-main().catch((error: unknown) => {
-  // El mensaje de Prisma puede incluir el host: se muestra solo el tipo de error.
-  const name = error instanceof Error ? error.name : 'Error';
-  console.error(`db:bootstrap: falló (${name}). Revisá la conexión y los datos.`);
-  process.exit(1);
-});
+main().catch(reportFailure(COMMAND));

@@ -110,7 +110,7 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       envelope_handlers: ['MANAGER_ONLY', 'MANAGER_AND_EDITOR'],
       hours_basis: ['PERIOD_TOTAL'],
       hours_entry: ['PERIOD_TOTAL_AT_CLOSE'],
-      membership_role: ['OWNER', 'ADMIN', 'MANAGER', 'VIEWER'],
+      membership_role: ['OWNER', 'MANAGER', 'EDITOR', 'VIEWER', 'SELF'],
       payment_event_type: [
         'CREATED',
         'PREPARED',
@@ -145,6 +145,8 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       'trg_daily_distribution_items_require_draft',
       'trg_daily_distributions_guard',
       'trg_ddi_hours_in_range',
+      'trg_employees_linked_membership_restaurant',
+      'trg_memberships_employee_same_restaurant',
       'trg_period_hours_guard',
       'trg_period_policy_changes_append_only',
       'trg_period_policy_changes_before_insert',
@@ -186,14 +188,18 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
 });
 
 describe('relaciones (claves foráneas)', () => {
-  it('todas las FK son ON DELETE RESTRICT, salvo auth_tokens -> users (CASCADE)', async () => {
+  it('todas las FK son ON DELETE RESTRICT, salvo tokens, sesiones y cuentas -> users (CASCADE)', async () => {
     const fks = await db.rows<{ conname: string; confdeltype: string }>(
       `SELECT conname, confdeltype::text AS confdeltype FROM pg_constraint
        WHERE contype = 'f' AND connamespace = 'public'::regnamespace ORDER BY conname`,
     );
     expect(fks.length).toBeGreaterThanOrEqual(40); // que la consulta no sea vacía
     const notRestrict = fks.filter((fk) => fk.confdeltype !== 'r').map((fk) => fk.conname);
-    expect(notRestrict).toEqual(['auth_tokens_user_id_fkey']);
+    expect(notRestrict).toEqual([
+      'accounts_user_id_fkey',
+      'auth_tokens_user_id_fkey',
+      'sessions_user_id_fkey',
+    ]);
   });
 
   it('rechaza referencias a filas inexistentes', async () => {

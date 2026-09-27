@@ -42,7 +42,7 @@ Cómo se arma el pozo es un **parámetro de la política de distribución** de c
 
 Nada se corrige en silencio ni compensando la semana siguiente. El flujo es:
 
-`Entrega realizada → autorización (OWNER/ADMIN) → reversión de la entrega (motivo obligatorio, auditoría) → anulación de la liquidación → corrección de los días afectados → re-liquidación (nueva revisión) → nuevo importe → nueva entrega`
+`Entrega realizada → autorización (OWNER/MANAGER) → reversión de la entrega (motivo obligatorio, auditoría) → anulación de la liquidación → corrección de los días afectados → re-liquidación (nueva revisión) → nuevo importe → nueva entrega`
 
 Todo queda en `weekly_payment_events` (bitácora inmutable) y en `audit_log`: quién, cuándo, por qué, importes anterior y nuevo. Detalle en `DATABASE.md` §6.
 
@@ -138,8 +138,8 @@ Por qué monolito: producto gratuito con equipo chico; dos despliegues duplican 
 | Formularios | **React Hook Form + Zod** | Un esquema valida cliente y servidor |
 | Base de datos | **PostgreSQL** | Transacciones, `CHECK`, triggers, índices parciales |
 | ORM | **Prisma** (+ SQL en migraciones) | Tipos y migraciones; triggers/CHECK en SQL |
-| Auth | **Auth.js v5** (email + contraseña, Google opcional) | Estándar |
-| Contraseñas | **argon2id** | Práctica recomendada |
+| Auth | **Better Auth 1.7** (email + contraseña; sin plugin de organizaciones) | Sesiones en Postgres, rate limit, verificación y reset incluidos |
+| Contraseñas | **scrypt** (el de Better Auth) | Práctica recomendada |
 | Motor de cálculo | **TypeScript + `BigInt`, cero dependencias** | Sin floats ni librerías decimales (ver §7) |
 | Tests | **Vitest** (+ fast-check para propiedades) y **Playwright** (E2E) | Foco en el motor |
 | Hosting | **Vercel + Neon** (o Supabase como Postgres) | Capa gratuita |
@@ -201,7 +201,7 @@ sistema-propinas/
 │     │  ├─ components/ (ui/, features/)
 │     │  ├─ actions/                # Server Actions (Zod → services)
 │     │  ├─ server/
-│     │  │  ├─ db.ts · auth.ts · permissions.ts
+│     │  │  ├─ db.ts · auth/ (Better Auth, sesión) · access/ (requireAccess, roles)
 │     │  │  ├─ services/            # casos de uso transaccionales
 │     │  │  ├─ adapters/            # Prisma ⇄ tip-engine
 │     │  │  └─ repositories/
@@ -346,7 +346,7 @@ computeWeeklySettlement(days: { date: string; distributionId: string;
 
 ## 9. Autenticación y autorización
 
-**Autenticación:** Auth.js con email + contraseña (argon2id); Google opcional. Cookies `httpOnly`, `secure`, `sameSite=lax`. Rate limiting en login, registro, reenvíos y recuperación (tabla `rate_limits` en Postgres).
+**Autenticación (Fase 2, implementada):** Better Auth con email + contraseña (hash scrypt), sesiones en Postgres (`sessions`; cerrar o revocar corta el acceso al instante, sin caché de sesión en cookie), cookie `gutip.session_token` `httpOnly`, `sameSite=lax` y `secure` en producción, control de origen (pedidos con cookie desde otro origen → 403) y límite de intentos en Postgres (`auth_rate_limits`; login: 5 por minuto por IP). Registro público **deshabilitado** hasta tener invitaciones. Better Auth usa nuestra tabla `users` como su modelo `user` (no hay usuarios paralelos); su plugin de organizaciones **no** se usa. Configuración en `apps/web/src/server/auth/auth.ts`; secretos solo por entorno (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`).
 
 **Email en el MVP (recuperación de contraseña + verificación de email).** Ambos flujos comparten el mismo mecanismo y no agregan infraestructura compleja: una tabla `auth_tokens` y **un servicio de envío de emails**.
 
@@ -354,7 +354,7 @@ computeWeeklySettlement(days: { date: string; distributionId: string;
 - Recuperación: el formulario responde siempre lo mismo exista o no el email (no revela qué cuentas existen); al cambiar la contraseña se invalidan las sesiones anteriores.
 - Verificación: al registrarse se envía el enlace. Propuesta: el usuario no accede a la aplicación hasta verificar (con opción de reenviar).
 - El envío está detrás de una interfaz `Mailer`. En desarrollo/tests se usa `ConsoleMailer` (imprime el enlace), así que **la elección del proveedor no bloquea la Fase 0 ni el desarrollo**.
-- Nota técnica: el proveedor *Credentials* de Auth.js no trae estos flujos incluidos, por lo que se implementan sobre `auth_tokens`. Alternativa evaluable antes de empezar la autenticación: Better Auth, que los incluye de fábrica.
+- Nota técnica: Better Auth trae ambos flujos (tokens en `verifications`); falta conectarlos a un `Mailer` (A1). La tabla `auth_tokens` del diseño anterior quedó sin uso.
 
 **Decisión de infraestructura pendiente (no se implementa hasta que la confirmes):** el proveedor de email transaccional para producción.
 
@@ -367,23 +367,25 @@ computeWeeklySettlement(days: { date: string; distributionId: string;
 
 Con esos volúmenes (una cuenta por restaurante, unos pocos emails por usuario) la capa gratuita alcanza con margen. Lo único que requiere una acción tuya es **tener un dominio** (o aceptar un remitente compartido con menor entregabilidad) y crear la cuenta en el proveedor elegido.
 
-**Autorización:** cada request resuelve `session.user` + `membership` del restaurante activo; toda Server Action llama a `can(membership, action)`. Los repositorios exigen `restaurantId` (nunca se lee un registro solo por `id`).
+**Autorización (Fase 2, implementada):** la autoridad es `requireAccess({ restaurantId, roles })` (`src/server/access/`), que en cada página y cada acción del servidor:
+1. obtiene la sesión real (cookie validada por Better Auth contra `sessions`);
+2. resuelve el restaurante (el indicado o el activo: una preferencia en la cookie `gutip_restaurant` que solo vale si el usuario es miembro; si no, su primer restaurante);
+3. busca la membresía de ese usuario en ese restaurante;
+4. valida el rol y devuelve un contexto tipado (`restaurantId`, `userId`, `role`, `employeeId`…).
 
-**Mientras no haya sesión (Fase 1):** el restaurante y el operador salen de variables de entorno del servidor (`GUTIP_RESTAURANT_ID`, `GUTIP_OPERATOR_EMAIL`) y `resolveAccess()` verifica la membresía en la base; editar la política exige `OWNER` o `ADMIN`, como en la matriz. Es solo para desarrollo local. Con Better Auth, `requireAccess(restaurantId, capacidad)` reemplaza a `configuredOperator()` + `resolveAccess()` sin cambiar repositorios ni servicios.
+Falla de forma segura: sin sesión → login; sin membresía, restaurante inexistente/archivado o recurso de otro restaurante → **404** (no revela que existe); rol insuficiente → "sin permiso". Del navegador nunca llegan `restaurantId`, `userId` ni rol. Los repositorios y servicios siguen recibiendo `restaurantId` + `userId` del contexto y filtran siempre por restaurante. SELF usa `employeeScope(contexto)` / `assertEmployeeInScope` para ver solo lo de su empleado vinculado.
 
-| Acción | OWNER | ADMIN | MANAGER (encargado) | VIEWER |
-|---|---|---|---|---|
-| Configurar restaurante / miembros | ✔ | ✔ | ✘ | ✘ |
-| Equipos, puestos, personal | ✔ | ✔ | ✘ | ✘ |
-| Cotizaciones y adelantos | ✔ | ✔ | ✔ | ✘ |
-| Crear/editar distribución diaria (DRAFT) y **cerrar el día** | ✔ | ✔ | ✔ | ✘ |
-| Anular distribución diaria | ✔ | ✔ | ✘ | ✘ |
-| Cerrar / anular liquidación semanal | ✔ | ✔ | ✘ | ✘ |
-| Preparar y entregar sobres | ✔ | ✔ | ✔ | ✘ |
-| Revertir un sobre ya entregado | ✔ | ✔ | ✘ | ✘ |
-| Ver historial, dashboard, sobres | ✔ | ✔ | ✔ | ✔ |
+**Roles** (`MembershipRole`): `OWNER` (dueño, **uno por restaurante**; quien crea un restaurante queda como OWNER), `MANAGER` (encargado), `EDITOR`, `VIEWER` (lector) y `SELF` (solo lo propio; exige `memberships.employee_id` de un empleado del mismo restaurante). Un usuario puede ser miembro de varios restaurantes, con un rol en cada uno.
 
-En el MVP solo existe `OWNER`; la matriz es la prevista para cuando se habiliten los demás roles.
+| Acción | OWNER | MANAGER | EDITOR | VIEWER | SELF |
+|---|---|---|---|---|---|
+| Ver configuración de distribución | ✔ | ✔ | ✔ | ✔ | ✘ |
+| Cambiar configuración de distribución | ✔ | ✔ | ✘ | ✘ | ✘ |
+| Ver empleados | ✔ | ✔ | ✔ | ✔ | solo el suyo |
+
+Implementado en la matriz `CAN` de `src/server/access/roles.ts`. **Previsto** (se fija al migrar cada pantalla desde la demo, que ya usa esta semántica): miembros e invitaciones (OWNER; MANAGER según se decida), personal (OWNER/MANAGER), cargar la semana (OWNER/MANAGER/EDITOR), cerrar/anular liquidación y revertir sobres (OWNER/MANAGER), sobres propios (SELF).
+
+
 
 ---
 
@@ -425,7 +427,7 @@ Diseño responsive: los encargados cargan horas y entregan sobres desde el celul
 | Adelanto cargado después de cerrar el día | No modifica días cerrados; se aplica en el siguiente cierre |
 | Anular un día ya cerrado | Solo si no está en una liquidación; reabre los adelantos que había consumido |
 | Error descubierto con la semana ya liquidada | Anular la liquidación (si ningún sobre se entregó), corregir y volver a cerrar |
-| Error con sobres ya entregados | Flujo de §1.2: revertir entrega (OWNER/ADMIN, motivo obligatorio, auditoría) → anular liquidación → corregir → re-liquidar → nueva entrega. Nunca se compensa en la semana siguiente |
+| Error con sobres ya entregados | Flujo de §1.2: revertir entrega (OWNER/MANAGER, motivo obligatorio, auditoría) → anular liquidación → corregir → re-liquidar → nueva entrega. Nunca se compensa en la semana siguiente |
 | Sobre re-liquidado con importe distinto al ya entregado | Se muestra "ya entregado antes" vs "nuevo importe"; ambos quedan registrados |
 | Token de email vencido/reutilizado | Se rechaza; se ofrece reenviar (con límite de intentos) |
 | Día sin distribución (local cerrado) | Simplemente no existe; la matriz lo muestra vacío |
@@ -453,12 +455,12 @@ Diseño responsive: los encargados cargan horas y entregan sobres desde el celul
 - **D2 — Adelantos:** se descuentan al cerrar cada distribución diaria; el excedente queda como saldo pendiente aplicable a futuras distribuciones.
 - **D3 — Excel:** tests con casos explícitos coherentes con la fórmula; el `.xlsx` real se agregará desde `reference/` cuando esté disponible.
 - **D4 — Correcciones tras entrega:** reversión autorizada, con motivo y auditoría → re-liquidación → nueva entrega (§1.2).
-- **D5 — Email:** recuperación de contraseña **y** verificación de email en el MVP, sobre `auth_tokens` + interfaz `Mailer`.
+- **D5 — Email:** recuperación de contraseña **y** verificación de email en el MVP (Better Auth + interfaz `Mailer`; todavía sin implementar: falta A1).
+- **D6 — Autenticación:** Better Auth sobre nuestras tablas; autorización propia con `restaurants` + `memberships` (§9).
 
 **Abiertas**
 - **A1 — Proveedor de email en producción** (§9): recomiendo Resend; requiere un dominio propio para enviar a cualquier destinatario. Se decide antes de implementar la autenticación (Fase 1), no antes de la Fase 0.
-- **A2 — Auth.js vs Better Auth**, dado que hay que construir verificación y reset (§9). Se decide al empezar la Fase 1.
-- **A3 — Autorización de reversiones:** hoy es por rol (`OWNER`/`ADMIN` ejecutan y autorizan). Si querés un esquema de *solicitud + aprobación* de dos personas, el modelo ya tiene `performed_by` y `authorized_by` separados y solo cambiaría el flujo.
+- **A3 — Autorización de reversiones:** hoy es por rol (`OWNER`/`MANAGER` ejecutan y autorizan). Si querés un esquema de *solicitud + aprobación* de dos personas, el modelo ya tiene `performed_by` y `authorized_by` separados y solo cambiaría el flujo.
 - **A4 — Verificación de la fórmula:** la fórmula (`puntos = horas × peso del puesto`, reparto proporcional a puntos) sale de tu descripción inicial. No pude ver la captura del Excel, así que no puedo confirmar que coincida con la mecánica real.
 
 ---

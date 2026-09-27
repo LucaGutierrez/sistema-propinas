@@ -43,6 +43,21 @@ pnpm prisma validate
 pnpm prisma generate
 ```
 
+### App con base de datos y login (Better Auth)
+
+En `apps/web/.env`: `DATABASE_URL`, `GUTIP_DATA_SOURCE=database`, `BETTER_AUTH_SECRET` (32+ caracteres
+aleatorios) y `BETTER_AUTH_URL=http://localhost:3000`. No hay registro público: la primera cuenta es el
+dueño que crea `db:bootstrap`, y su contraseña se define aparte (se pide por teclado, nunca en `.env`):
+
+```bash
+pnpm --filter @propinas/web db:bootstrap --confirm           # restaurante + dueño (OWNER) + política v1
+pnpm --filter @propinas/web db:operator-password --confirm   # contraseña del dueño (--reset para cambiarla)
+pnpm --filter @propinas/web dev                               # http://localhost:3000/login
+```
+
+Contra una base no local (Neon) los dos scripts exigen además `--allow-remote`. Roles y acceso:
+`ARCHITECTURE.md` §9.
+
 ## Estructura
 
 ```

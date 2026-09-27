@@ -158,6 +158,15 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Tests:** web 91 (planificadores de cambios, plantilla estándar, traducción a la base), `test:pg` 33 (14 del servicio con Prisma: ver `DATABASE.md` §11). Probado además en el navegador contra un PostgreSQL local descartable: cambiar una porción crea la versión 2 y conserva la 1.
 - **Pendiente:** inicializar el restaurante en Neon (con autorización); migrar Personal, Semana, adelantos y sobres; Better Auth (`requireAccess`).
 
+### 6.5 Fase 2 — autenticación y acceso real con Better Auth (2026-09-27, sin commit; migración NO aplicada en Neon)
+
+- **Better Auth 1.7.6** (única dependencia nueva) sobre nuestras tablas: `users` es su modelo `user` (sin usuarios paralelos); tablas nuevas `sessions`, `accounts`, `verifications`, `auth_rate_limits`. Email + contraseña (scrypt), registro público deshabilitado, sesión de 7 días en Postgres, cookie `httpOnly`/`sameSite=lax`/`secure` en producción, control de origen y límite de intentos en Postgres. Sin plugin de organizaciones.
+- **Acceso:** `src/server/access/` — `requireAccess({ restaurantId, roles })` = sesión real → membresía → rol → contexto tipado; sin sesión → login, sin membresía / otro restaurante → 404, rol insuficiente → sin permiso. Roles `OWNER` (uno por restaurante), `MANAGER`, `EDITOR`, `VIEWER`, `SELF` (con `memberships.employee_id`, solo su empleado). Restaurante activo: preferencia en cookie validada contra las membresías. Alta de restaurante (`server/restaurants/service.ts`) crea la membresía OWNER.
+- **Configuración de distribución** ya no usa `GUTIP_OPERATOR_EMAIL`/`GUTIP_RESTAURANT_ID`: página y acciones usan sesión + membresía; cada acción vuelve a verificar el rol (OWNER/MANAGER cambian; EDITOR/VIEWER solo ven; SELF no ve).
+- **UI mínima:** `/login`, `/cuenta` (sesión, restaurantes y rol, restaurante activo, cerrar sesión) y una barra de sesión en Configuración. El resto del shell sigue siendo el de la demo.
+- **Transición del dueño existente (Neon):** migración `20260928000000_auth` no destructiva (conserva usuarios, membresías y roles; guarda si hay `ADMIN` o emails con mayúsculas) + `db:operator-password` (agrega la contraseña al usuario existente, sin duplicarlo). `db:bootstrap` se conserva (no agrega un segundo OWNER).
+- **Verificado localmente:** lint, format, typecheck, `test` (web 102 + tip-engine 257), `test:db` 270, `test:pg` 66 (PostgreSQL 18 descartable), prisma validate/generate, build. Migración probada sobre una copia local con los mismos datos que Neon. Navegador (base local): login, error de contraseña, Configuración como OWNER (cambio → versión nueva a su nombre) y como VIEWER (sin edición), `/cuenta`, logout (borra la sesión).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:
@@ -193,7 +202,7 @@ pnpm --filter @propinas/web build
 ## 9. Qué NO debemos hacer todavía
 
 - ~~No construir la interfaz ni instalar Next.js~~ (Fase 1 aprobada: la interfaz existe como demo).
-- No implementar login, registro, verificación de email ni recuperación de contraseña hasta que el usuario apruebe el plan de Better Auth + persistencia (§11). El esquema de la política versionada ya está hecho (§6.3); otros cambios a `schema.prisma` requieren aprobación.
+- No implementar registro público, invitaciones, verificación de email ni recuperación de contraseña sin aprobación (el login con email y contraseña ya existe, §6.5). Cambios a `schema.prisma` requieren aprobación.
 - No convertir la fórmula provisional en regla definitiva ni cambiar el contrato del motor hasta resolver P1–P6 (§10).
 - No aplicar migraciones en Neon ni modificar esa base sin autorización explícita del usuario.
 - No modificar el motor de cálculo ni el esquema "por costumbre": cualquier cambio debe pasar `test`, `test:db` y actualizar `DATABASE.md`.
@@ -202,7 +211,7 @@ pnpm --filter @propinas/web build
 - No versionar datos reales (Excel con sueldos, `.env`, credenciales).
 - No agregar a los enums de la política opciones que GUTIP todavía no calcula. En Neon se verificó la **estructura** (objetos, checksum, sin drift), no el **comportamiento**: los triggers y la concurrencia se probaron en PGlite y en PostgreSQL real descartable (`test:pg`), no en Neon.
 - No correr `test:pg` apuntando a Neon ni a una base con datos (crea y borra bases).
-- No ejecutar `db:bootstrap` contra Neon ni activar `GUTIP_DATA_SOURCE=database` en un despliegue sin autorización explícita (antes de Better Auth, las acciones operan como el operador configurado).
+- No aplicar `20260928000000_auth` en Neon, ni correr `db:bootstrap`/`db:operator-password` contra Neon, ni activar `GUTIP_DATA_SOURCE=database` en un despliegue sin autorización explícita.
 - No hacer `push` sin que el usuario lo pida, ni merge a `main` sin su aprobación.
 
 ## 10. Problemas y decisiones pendientes
@@ -210,8 +219,8 @@ pnpm --filter @propinas/web build
 | # | Pendiente | Detalle |
 |---|---|---|
 | A1 | Proveedor de email en producción | **Postergado (2026-09-25).** No hay dominio propio todavía. Se desarrolla con `ConsoleMailer` detrás de la interfaz `Mailer`; el proveedor (Resend recomendado, requiere dominio) se elige antes de publicar. No bloquea la Fase 1. |
-| A2 | Auth.js vs Better Auth | **Decidido (2026-09-25): Better Auth.** Trae verificación de email y reset. Pendiente al empezar la Fase 1: conciliar sus tablas (`user`, `session`, `account`, `verification`) con `users` y `auth_tokens` del esquema actual, y actualizar `DATABASE.md`. |
-| A3 | Autorización de reversiones | Hoy es por rol (`OWNER`/`ADMIN` ejecutan y autorizan). Si se prefiere "solicitud + aprobación" de dos personas, el modelo ya separa `performed_by` y `authorized_by`. |
+| A2 | Auth.js vs Better Auth | **Implementado (2026-09-27): Better Auth** sobre `users` + `sessions`/`accounts`/`verifications`/`auth_rate_limits` (§6.5). Quedan sin uso `auth_tokens`, `rate_limits` y las columnas `password_hash`, `email_verified_at`, `password_changed_at` (limpieza en una migración futura). |
+| A3 | Autorización de reversiones | Hoy es por rol (`OWNER`/`MANAGER` ejecutan y autorizan). Si se prefiere "solicitud + aprobación" de dos personas, el modelo ya separa `performed_by` y `authorized_by`. |
 | A4 | Verificación de la fórmula | **Parcialmente resuelto (2026-09-26).** Se analizó la foto de la planilla (`reference/`, ignorada por git): confirma el reparto proporcional a horas × factor y el descuento del adelanto. Diferencias con el motor: horas semanales (> 24), factores con más decimales y distintos dentro de un puesto, redondeo a pesos. Quedan P1–P7. |
 | D1 | Pozo del negocio real | **Reemplazado por P2** (porcentajes por grupo). En la base, `pool_structure` de la política (hoy `SINGLE_POOL`). |
 
@@ -232,28 +241,25 @@ pnpm --filter @propinas/web build
 | — | Versiones de PostgreSQL | Resuelto: Neon ofrece 18.6 y PGlite 18.3 (misma versión mayor). |
 | — | Tipos de ítem por día | Un ítem por empleado por distribución (si cambia de puesto en el día se carga el principal). Limitación conocida; extensión posible. |
 
-## 11. Pendiente para Better Auth + persistencia real
+## 11. Pendiente después del núcleo de Better Auth (§6.5)
 
-Plan presentado el 2026-09-26 (en la conversación; **no aprobado ni empezado**). Resumen:
-
-- **Better Auth, solo el núcleo** (email + contraseña, sesiones, verificación, recuperación). Restaurantes, membresías e invitaciones quedan como tablas propias (no el plugin de organizaciones).
-- **Tablas nuevas:** `sessions`, `accounts`, `verifications` (y `auth_rate_limits`), `invitations`. Se adapta `users` (sin `password_hash`; `email_verified` booleano); se eliminan `auth_tokens` y `rate_limits`. Confirmar los nombres exactos con el CLI de Better Auth de la versión instalada.
-- **Permisos:** `MembershipRole` pasa a `OWNER, MANAGER, EDITOR, VIEWER, SELF` (Dueño, Encargado, Editor, Solo ver, Solo lo suyo); `memberships.employee_id` para vincular cuenta ↔ empleado; un único `OWNER` por restaurante.
-- **Servidor:** rutas `/l/[restaurantId]/…`, `requireAccess(restaurantId, capacidad)` en cada página y acción, repositorios que reciben el contexto de acceso (filtran por `employee_id` para "Solo lo suyo"), 404 a quien no es miembro. Reutiliza la matriz de `permissions.ts`.
-- **Migraciones separadas:** M2 (acceso: no depende de la fórmula) y M3 (distribución: después de P1–P6). Cada una con guarda "tablas vacías", primero en una rama de Neon, verificación de drift y tests (`test:db`, `test:pg`, por rol, Playwright).
-- **Bloqueantes externos:** A1 (proveedor de email) para recuperar contraseñas en producción.
+- **Neon (con autorización):** aplicar `20260928000000_auth` (primero en una branch de prueba, como las anteriores), luego `db:operator-password --confirm --allow-remote` para el dueño existente. Definir `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` del entorno.
+- **Invitaciones** (tablas propias) y alta de miembros con rol; **registro** público (hoy deshabilitado).
+- **Email** (A1): verificación y recuperación de contraseña con Better Auth + `Mailer`.
+- **IP del cliente para el límite de intentos** según el hosting (encabezado confiable / proxies de confianza): sin eso, en producción todos comparten un contador por ruta.
+- **Shell:** el menú y el encabezado siguen siendo los de la demo ("Modo demo", selector de locales); pasarlos a la sesión cuando se migren las demás pantallas.
+- **Pantallas en la demo:** Inicio, Semana, Historial, Personal, Acceso, Mis sobres, Mis locales. Cada una pasa a `requireAccess` + repositorios por `restaurantId` (SELF con `employeeScope`) al migrarla.
+- **Limpieza** de lo anterior a Better Auth (`auth_tokens`, `rate_limits`, columnas viejas de `users`) en una migración aparte.
 
 ---
 
 ## NEXT STEP
 
-**Cuando retomemos: la Fase 0 está cerrada (CI en verde). La Fase 1 migra pantalla por pantalla: "Configuración de distribución" ya usa la base (§6.4); el resto sigue en la demo. Neon production tiene el esquema pero ningún restaurante inicializado.**
+**Cuando retomemos: Fase 1 cerrada (Configuración de distribución con Prisma + Neon; Neon tiene el restaurante real con OWNER y la política v1/v2). Fase 2 (Better Auth + acceso real) implementada localmente (§6.5), sin commit y sin aplicar en Neon.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm typecheck`, `pnpm test` (web 91 + tip-engine 257), `pnpm test:db` (250), `pnpm test:pg` (33, PostgreSQL descartable en UTF8), `pnpm --filter @propinas/web build`. Confirmar que el CI quedó en verde.
-2. **Configuración de Library:** confirmar con el restaurante los parámetros pendientes (§10, pantalla "Configuración de distribución") y conseguir el `.xlsx` (P7). No son decisiones globales de GUTIP.
-3. ~~**Diseño de datos (Prisma)** de la política versionada~~ (hecho el 2026-09-26, §6.3). **Neon:** `20260926000000_distribution_policies` aplicada en production (2026-09-26); la branch de prueba `test-distribution-policies` se puede borrar desde la consola de Neon.
-4. ~~**Demo:** adelantos como movimientos y anular / rehacer una semana~~ (hecho el 2026-09-26). La demo cubre todo el flujo acordado; lo que falta depende de decisiones (§10) o de la persistencia (§11).
-5. **Neon (solo con autorización):** inicializar el restaurante con `db:bootstrap --confirm --allow-remote`.
-6. **Persistencia (solo con aprobación explícita):** siguientes pantallas (Personal, Semana) y plan de §11 (Better Auth en local, sin tocar Neon). Al pasar a la base: los adelantos de la demo corresponden a `advances` (+ `advance_applications` al cerrar) y las revisiones anuladas a `weekly_settlements` con `revision` / `supersedes` y sobres `VOIDED`.
+1. **Verificar el estado:** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (web 102 + tip-engine 257), `pnpm test:db` (270), `pnpm test:pg` (66, PostgreSQL descartable en UTF8), `pnpm prisma validate/generate`, `pnpm --filter @propinas/web build`.
+2. **Revisión del usuario** de la Fase 2 → commit / push / CI.
+3. **Neon (solo con autorización):** migración `20260928000000_auth` (branch de prueba → production) y `db:operator-password --confirm --allow-remote` para el dueño existente (§11).
+4. **Siguientes pantallas** con `requireAccess` (Personal, Semana…) y las decisiones pendientes de §10/§11.
 
 No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.

@@ -1,0 +1,82 @@
+/**
+ * Autenticación con Better Auth (solo servidor). Se apoya en NUESTRAS tablas:
+ *
+ *   users          → modelo `user` de Better Auth (la misma tabla que usa el resto del sistema)
+ *   sessions       → sesiones (la cookie lleva el token firmado; revocar = borrar la fila)
+ *   accounts       → email y contraseña: providerId "credential", `password` = hash scrypt
+ *   verifications  → tokens de verificación / recuperación (todavía sin uso: no hay mailer)
+ *   auth_rate_limits → límite de intentos compartido entre instancias (serverless)
+ *
+ * La AUTORIZACIÓN no es de Better Auth: vive en `restaurants` + `memberships` y la resuelve
+ * `server/access` en cada pedido. No se usa el plugin de organizaciones.
+ *
+ * Secretos por entorno (nunca en el código): BETTER_AUTH_SECRET (≥ 32 caracteres aleatorios) y
+ * BETTER_AUTH_URL (origen público, p. ej. http://localhost:3000). La instancia se crea recién en
+ * el primer uso para que `next build` no necesite el secreto.
+ */
+import type { PrismaClient } from '@prisma/client';
+import { betterAuth } from 'better-auth';
+import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { getDb } from '../db';
+
+export const MIN_PASSWORD_LENGTH = 10;
+export const MAX_PASSWORD_LENGTH = 128;
+
+/** Duración de la sesión (se renueva sola con el uso, una vez por día). */
+const SESSION_DAYS = 7;
+
+export interface AuthOverrides {
+  /** Solo para tests: en la aplicación salen de BETTER_AUTH_SECRET / BETTER_AUTH_URL. */
+  secret?: string;
+  baseURL?: string;
+}
+
+export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
+  return betterAuth({
+    appName: 'GUTIP',
+    secret: overrides.secret,
+    baseURL: overrides.baseURL,
+    database: prismaAdapter(db, { provider: 'postgresql' }),
+    emailAndPassword: {
+      enabled: true,
+      // Todavía no hay registro público: las cuentas nacen por db:bootstrap + db:operator-password
+      // (y más adelante, por invitación). Evita que cualquiera cree usuarios.
+      disableSignUp: true,
+      minPasswordLength: MIN_PASSWORD_LENGTH,
+      maxPasswordLength: MAX_PASSWORD_LENGTH,
+    },
+    session: {
+      expiresIn: 60 * 60 * 24 * SESSION_DAYS,
+      updateAge: 60 * 60 * 24,
+      // Sin caché de sesión en cookie: cerrar o revocar una sesión corta el acceso al instante.
+    },
+    rateLimit: {
+      enabled: true,
+      storage: 'database',
+      modelName: 'authRateLimit',
+      customRules: { '/sign-in/email': { window: 60, max: 5 } },
+    },
+    advanced: {
+      cookiePrefix: 'gutip',
+      // httpOnly y sameSite=lax siempre (Better Auth); `secure` en producción (HTTPS).
+      useSecureCookies: process.env.NODE_ENV === 'production',
+      // Los ids de nuestras tablas son uuid.
+      database: { generateId: 'uuid' },
+      // Explícitos: Better Auth los apaga solo en entorno de test; así los tests prueban lo mismo
+      // que corre en producción (pedidos con cookie desde otro origen → 403).
+      disableOriginCheck: false,
+      disableCSRFCheck: false,
+    },
+    telemetry: { enabled: false },
+  });
+}
+
+export type Auth = ReturnType<typeof createAuth>;
+
+const globalForAuth = globalThis as unknown as { gutipAuth?: Auth };
+
+/** Instancia de la aplicación (una por proceso). */
+export function getAuth(): Auth {
+  globalForAuth.gutipAuth ??= createAuth(getDb());
+  return globalForAuth.gutipAuth;
+}

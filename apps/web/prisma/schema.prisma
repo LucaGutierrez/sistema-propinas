@@ -17,11 +17,15 @@ datasource db {
 
 // ───────────────────────────── Enums ─────────────────────────────
 
+/// Rol de un usuario en un restaurante (ARCHITECTURE.md §9). OWNER: dueño (uno por restaurante).
+/// MANAGER: encargado. EDITOR: carga la semana. VIEWER: solo lectura. SELF: solo lo de su
+/// empleado vinculado (memberships.employee_id).
 enum MembershipRole {
   OWNER
-  ADMIN
   MANAGER
+  EDITOR
   VIEWER
+  SELF
 
   @@map("membership_role")
 }
@@ -186,16 +190,24 @@ enum AuthTokenType {
 
 // ─────────────────────── Identidad y acceso ───────────────────────
 
+/// Usuario. Better Auth lo usa como su modelo `user` (campos name, email, emailVerified, image,
+/// createdAt, updatedAt); la contraseña vive en `accounts` (proveedor "credential").
+/// password_hash, email_verified_at y password_changed_at son del diseño anterior a Better Auth:
+/// no se usan y quedan hasta decidir su limpieza (sin datos en ninguna base).
 model User {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email             String    @unique
   name              String
+  emailVerified     Boolean   @default(false) @map("email_verified")
+  image             String?
   passwordHash      String?   @map("password_hash")
   emailVerifiedAt   DateTime? @map("email_verified_at") @db.Timestamptz(6)
   passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(6)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  sessions                  Session[]
+  accounts                  Account[]
   memberships               Membership[]
   authTokens                AuthToken[]
   exchangeRatesCreated      ExchangeRate[]              @relation("ExchangeRateCreatedBy")
@@ -236,7 +248,73 @@ model AuthToken {
   @@map("auth_tokens")
 }
 
+/// Sesión de Better Auth (modelo `session`). La cookie guarda el token firmado; se revoca borrando la fila.
+model Session {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Cuenta de Better Auth (modelo `account`): con email y contraseña, providerId = "credential",
+/// accountId = id del usuario y `password` = hash (scrypt de Better Auth).
+model Account {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  password              String?
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz(6)
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz(6)
+  scope                 String?
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// Tokens de Better Auth (modelo `verification`: verificación de email, reset de contraseña).
+model Verification {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+/// Límite de intentos de Better Auth (login, etc.) en Postgres: en serverless la memoria no se
+/// comparte. `last_request` en milisegundos desde 1970 (así lo guarda Better Auth).
+model AuthRateLimit {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String @unique
+  count       Int
+  lastRequest BigInt @map("last_request")
+
+  @@map("auth_rate_limits")
+}
+
 /// Límite de intentos (login, registro, reenvíos, reset) en Postgres: en serverless la memoria no se comparte.
+/// Diseño anterior a Better Auth (que usa auth_rate_limits): no se usa; sin datos.
 model RateLimit {
   key         String
   windowStart DateTime @map("window_start") @db.Timestamptz(6)
@@ -277,16 +355,22 @@ model Restaurant {
   @@map("restaurants")
 }
 
+/// Autorización: qué puede hacer un usuario en un restaurante. Un OWNER por restaurante y SELF
+/// siempre vinculado a un empleado del mismo restaurante (índices, CHECK y trigger en
+/// sql/constraints.sql).
 model Membership {
   id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId       String         @map("user_id") @db.Uuid
   restaurantId String         @map("restaurant_id") @db.Uuid
   role         MembershipRole
+  /// Empleado vinculado (opcional; obligatorio para SELF). Del mismo restaurante.
+  employeeId   String?        @map("employee_id") @db.Uuid
   createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  employee   Employee?  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@unique([userId, restaurantId])
   @@map("memberships")
@@ -346,6 +430,7 @@ model Employee {
 
   restaurant        Restaurant              @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
   defaultPosition   Position?               @relation("EmployeeDefaultPosition", fields: [defaultPositionId], references: [id], onDelete: Restrict)
+  memberships       Membership[]
   distributionItems DailyDistributionItem[]
   advances          Advance[]
   weeklyPayments    WeeklyPayment[]

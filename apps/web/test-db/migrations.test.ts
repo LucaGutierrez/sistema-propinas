@@ -92,6 +92,64 @@ describe('migraciones (prisma/migrations)', () => {
     }
   });
 
+  it('la migración de autenticación termina con una copia literal de sql/0003_auth.sql', () => {
+    const auth = migrationNames().find((name) => name.endsWith('_auth'));
+    expect(auth).toBeDefined();
+    expect(migrationSql(auth ?? '').endsWith(sqlFile('0003_auth.sql'))).toBe(true);
+  });
+
+  /** Base con las migraciones anteriores a la de autenticación y un restaurante con su OWNER. */
+  async function beforeAuth(role: string, email = 'operador@example.com'): Promise<PGlite> {
+    const db = new PGlite({ extensions: { btree_gist } });
+    for (const name of migrationNames().filter((n) => !n.endsWith('_auth'))) {
+      await db.exec(migrationSql(name));
+    }
+    await db.exec(`
+      INSERT INTO users (id, email, name, updated_at)
+        VALUES ('00000000-0000-0000-0000-000000000001', '${email}', 'Operador', now());
+      INSERT INTO restaurants (id, name, updated_at)
+        VALUES ('00000000-0000-0000-0000-000000000010', 'Demo', now());
+      INSERT INTO memberships (user_id, restaurant_id, role, updated_at)
+        VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010',
+                '${role}', now());`);
+    return db;
+  }
+
+  it('la migración de autenticación conserva usuarios y membresías existentes', async () => {
+    const db = await beforeAuth('OWNER');
+    try {
+      const auth = migrationNames().find((name) => name.endsWith('_auth'));
+      await db.exec(migrationSql(auth ?? ''));
+      const rows = await db.query<{ email: string; email_verified: boolean; role: string }>(
+        `SELECT u.email, u.email_verified, m.role::text AS role
+         FROM users u JOIN memberships m ON m.user_id = u.id`,
+      );
+      expect(rows.rows).toEqual([
+        { email: 'operador@example.com', email_verified: false, role: 'OWNER' },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it.each([
+    ['una membresía ADMIN', 'ADMIN', 'operador@example.com'],
+    ['un email con mayúsculas', 'OWNER', 'Operador@Example.com'],
+  ])(
+    'la migración de autenticación no se aplica con %s (guarda explícita)',
+    async (_, role, email) => {
+      const db = await beforeAuth(role, email);
+      try {
+        const auth = migrationNames().find((name) => name.endsWith('_auth'));
+        await expect(db.exec(migrationSql(auth ?? ''))).rejects.toThrow(/MIGRATION GUARD/);
+        const rows = await db.query<{ role: string }>(`SELECT role::text AS role FROM memberships`);
+        expect(rows.rows).toEqual([{ role }]);
+      } finally {
+        await db.close();
+      }
+    },
+  );
+
   it('aplicar las migraciones en orden produce exactamente la base que prueban los demás tests', async () => {
     const fromMigrations = new PGlite({ extensions: { btree_gist } });
     const reference = new PGlite({ extensions: { btree_gist } });

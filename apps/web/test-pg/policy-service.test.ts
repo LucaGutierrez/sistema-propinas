@@ -4,7 +4,8 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { STANDARD_VALUES } from '@/lib/demo-store/config';
 import { valuesToColumns } from '@/lib/policy/db-mapping';
 import { STANDARD_TEMPLATE } from '@/lib/policy/standard';
-import { AccessError, resolveAccess } from '@/server/context';
+import { resolveAccess } from '@/server/access/access';
+import { ROLES } from '@/server/access/roles';
 import {
   countClosedPeriodsByVersion,
   getCurrentPolicy,
@@ -456,19 +457,19 @@ describe('restaurant scoping', () => {
     expect((await listPolicyVersions(db, b.input.restaurantId)).map((v) => v.number)).toEqual([1]);
     expect((await getCurrentPolicy(db, b.input.restaurantId))?.values.rounding).toBe('CENTAVO');
 
-    // Un operador sin membresía en B no obtiene acceso a B.
+    // Un usuario sin membresía en B no obtiene acceso a B (404, no revela que existe).
+    const userA = { id: a.actor.userId, email: a.input.operatorEmail, name: 'Operador' };
     await expect(
-      resolveAccess(db, { restaurantId: b.input.restaurantId, email: a.input.operatorEmail }),
-    ).rejects.toBeInstanceOf(AccessError);
-    const access = await resolveAccess(db, {
+      resolveAccess(db, userA, { restaurantId: b.input.restaurantId, roles: ROLES }),
+    ).rejects.toMatchObject({ reason: 'NOT_FOUND' });
+    const access = await resolveAccess(db, userA, {
       restaurantId: a.input.restaurantId,
-      email: a.input.operatorEmail,
+      roles: ROLES,
     });
     expect(access).toMatchObject({
       restaurantId: a.input.restaurantId,
       userId: a.actor.userId,
       role: 'OWNER',
-      canConfigure: true,
     });
   });
 });

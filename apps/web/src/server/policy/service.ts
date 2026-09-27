@@ -26,7 +26,7 @@ import { portionToDb, valuesToColumns } from '@/lib/policy/db-mapping';
 import { STANDARD_TEMPLATE, type PolicyTemplate } from '@/lib/policy/standard';
 import { getPolicyVersion, type DbClient, type PolicyVersionRecord } from './repository';
 
-/** Quién opera y sobre qué restaurante (hoy desde `server/context.ts`; luego `requireAccess`). */
+/** Quién opera y sobre qué restaurante: sale de `requireAccess` / `resolveAccess` (server/access). */
 export interface Actor {
   restaurantId: string;
   userId: string;
@@ -358,6 +358,14 @@ export async function bootstrapRestaurant(
         select: { id: true },
       });
       if (!membership) {
+        // El dueño es uno solo (ux_memberships_one_owner): no se agrega otro OWNER.
+        const owner = await tx.membership.findFirst({
+          where: { restaurantId: input.restaurantId, role: 'OWNER' },
+          select: { id: true },
+        });
+        if (owner) {
+          throw new BootstrapAborted('El restaurante ya tiene otro dueño: revisar a mano.');
+        }
         await tx.membership.create({
           data: { userId: user.id, restaurantId: input.restaurantId, role: 'OWNER' },
         });

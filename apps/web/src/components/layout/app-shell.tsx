@@ -95,6 +95,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
 
+  // El login va sin menú ni datos del local.
+  if (pathname === '/login') return <>{children}</>;
+
   return (
     <div className="min-h-dvh">
       {/* Sidebar fija en escritorio */}
