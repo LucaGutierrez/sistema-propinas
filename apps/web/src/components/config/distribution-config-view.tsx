@@ -147,36 +147,40 @@ export function DistributionConfigView({
             param={param}
             canEdit={canEdit}
             actions={actions}
+            showReference={view.source === 'demo'}
           />
         ))}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
         <VersionHistory versions={view.versions} current={version.number} />
-        <Card className="self-start">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FlaskConicalIcon className="size-4 text-primary" />
-              Caso de referencia: Library (Hotel Faena)
-            </CardTitle>
-            <CardDescription>
-              Lo que falta verificar para reproducir la planilla de Library. Es información de
-              validación: no bloquea el cierre.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <p>
-              <span className="font-medium">Verificado:</span> con redondeo a pesos enteros y los
-              porciones deducidas de la foto de la planilla (23/11/2024), GUTIP reproduce los 12
-              importes y el total de $347.990.
-            </p>
-            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              {LIBRARY_CHECKS.map((check) => (
-                <li key={check}>{check}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+        {/* Caso de referencia de un restaurante (Library): solo en la demo, nunca en una cuenta real. */}
+        {view.source === 'demo' ? (
+          <Card className="self-start">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FlaskConicalIcon className="size-4 text-primary" />
+                Caso de referencia: Library (Hotel Faena)
+              </CardTitle>
+              <CardDescription>
+                Lo que falta verificar para reproducir la planilla de Library. Es información de
+                validación: no bloquea el cierre.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <p>
+                <span className="font-medium">Verificado:</span> con redondeo a pesos enteros y los
+                porciones deducidas de la foto de la planilla (23/11/2024), GUTIP reproduce los 12
+                importes y el total de $347.990.
+              </p>
+              <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                {LIBRARY_CHECKS.map((check) => (
+                  <li key={check}>{check}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       <FormulaCard className="mt-6" />
@@ -199,11 +203,13 @@ function ParamCard({
   param,
   canEdit,
   actions,
+  showReference,
 }: {
   version: PolicyVersion;
   param: ParamDefinition;
   canEdit: boolean;
   actions: DistributionConfigActions;
+  showReference: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -265,9 +271,11 @@ function ParamCard({
         {param.dependsOn ? (
           <p className="text-xs text-muted-foreground">{param.dependsOn}</p>
         ) : null}
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Referencia Library:</span> {param.library}
-        </p>
+        {showReference ? (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Referencia Library:</span> {param.library}
+          </p>
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}

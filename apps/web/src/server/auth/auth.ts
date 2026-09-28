@@ -17,7 +17,9 @@
 import type { PrismaClient } from '@prisma/client';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { getDb } from '../db';
+import { signUpBodyError } from './sign-up';
 import { trustedOriginsFrom } from './trusted-origins';
 
 export const MIN_PASSWORD_LENGTH = 10;
@@ -25,6 +27,19 @@ export const MAX_PASSWORD_LENGTH = 128;
 
 /** Duración de la sesión (se renueva sola con el uso, una vez por día). */
 const SESSION_DAYS = 7;
+
+/** Registros por IP y por hora (además del límite general de Better Auth para /sign-up). */
+export const SIGN_UP_PER_HOUR = 5;
+
+/**
+ * Valida el cuerpo del registro ANTES de que Better Auth busque el email: el resultado es el
+ * mismo exista o no la cuenta. Ver sign-up.ts.
+ */
+const signUpGuard = createAuthMiddleware(async (ctx) => {
+  if (ctx.path !== '/sign-up/email') return;
+  const error = signUpBodyError(ctx.body);
+  if (error) throw new APIError('BAD_REQUEST', { message: error, code: 'INVALID_SIGN_UP' });
+});
 
 export interface AuthOverrides {
   /** Solo para tests: en la aplicación salen de BETTER_AUTH_SECRET / BETTER_AUTH_URL. */
@@ -44,11 +59,22 @@ export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
     database: prismaAdapter(db, { provider: 'postgresql' }),
     emailAndPassword: {
       enabled: true,
-      // Todavía no hay registro público: las cuentas nacen por db:bootstrap + db:operator-password
-      // (y más adelante, por invitación). Evita que cualquiera cree usuarios.
-      disableSignUp: true,
+      // Registro público (/registro): SOLO crea la cuenta; nunca restaurantes ni membresías.
+      // Sin inicio de sesión automático: así Better Auth responde lo mismo si el email ya
+      // existe (hashea igual la contraseña y no crea nada), y no se puede averiguar qué emails
+      // están registrados. La pantalla inicia sesión después con las mismas credenciales.
+      autoSignIn: false,
       minPasswordLength: MIN_PASSWORD_LENGTH,
       maxPasswordLength: MAX_PASSWORD_LENGTH,
+    },
+    hooks: { before: signUpGuard },
+    databaseHooks: {
+      user: {
+        create: {
+          // El nombre se guarda sin espacios de más (la validación ya corrió en signUpGuard).
+          before: async (user) => ({ data: { ...user, name: user.name.trim() } }),
+        },
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * SESSION_DAYS,
@@ -59,7 +85,10 @@ export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
       enabled: true,
       storage: 'database',
       modelName: 'authRateLimit',
-      customRules: { '/sign-in/email': { window: 60, max: 5 } },
+      customRules: {
+        '/sign-in/email': { window: 60, max: 5 },
+        '/sign-up/email': { window: 60 * 60, max: SIGN_UP_PER_HOUR },
+      },
     },
     advanced: {
       cookiePrefix: 'gutip',

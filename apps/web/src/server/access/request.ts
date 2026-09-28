@@ -17,6 +17,20 @@ async function preferredRestaurantId(): Promise<string | undefined> {
   return (await cookies()).get(ACTIVE_RESTAURANT_COOKIE)?.value;
 }
 
+/**
+ * Guarda la preferencia de restaurante activo (cookie httpOnly). Llamar SOLO después de verificar
+ * que el usuario es miembro; igual, `authorize` la vuelve a validar en cada pedido.
+ */
+export async function setActiveRestaurantCookie(restaurantId: string): Promise<void> {
+  (await cookies()).set(ACTIVE_RESTAURANT_COOKIE, restaurantId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 365,
+  });
+}
+
 /** Restaurante activo del usuario, o null si no es miembro de ninguno. */
 export async function activeRestaurantId(user: SessionUser): Promise<string | null> {
   return pickActiveRestaurant(getDb(), user.id, await preferredRestaurantId());

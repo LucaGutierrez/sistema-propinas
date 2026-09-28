@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { AuthLayout } from '@/components/auth/auth-layout';
 import { LoginForm } from '@/components/auth/login-form';
-import { Logo } from '@/components/layout/logo';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { safeNextPath } from '@/lib/safe-next';
 import { getSessionUser } from '@/server/auth/session';
 import { databaseEnabled } from '@/server/context';
@@ -16,25 +17,34 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string | string[] }>;
 }) {
   const raw = (await searchParams).next;
-  // Sin destino, a "Mi sesión": el inicio todavía es la demo y no muestra la sesión.
-  const next = safeNextPath(Array.isArray(raw) ? raw[0] : raw, '/cuenta');
+  // Sin destino, al inicio (que manda a crear el primer restaurante si todavía no hay ninguno).
+  const next = safeNextPath(Array.isArray(raw) ? raw[0] : raw, '/');
 
   if (!databaseEnabled()) {
     return (
-      <Centered>
+      <AuthLayout>
         <CardHeader>
           <CardTitle>Modo demo</CardTitle>
           <CardDescription>
             Este servidor usa la demo del navegador: no hay cuentas ni inicio de sesión.
           </CardDescription>
         </CardHeader>
-      </Centered>
+      </AuthLayout>
     );
   }
   if (await getSessionUser()) redirect(next);
 
   return (
-    <Centered>
+    <AuthLayout
+      footer={
+        <>
+          ¿No tenés cuenta?{' '}
+          <Link href="/registro" className="font-medium text-primary hover:underline">
+            Creá una
+          </Link>
+        </>
+      }
+    >
       <CardHeader>
         <CardTitle>Iniciar sesión</CardTitle>
         <CardDescription>Entrá con el email y la contraseña de tu cuenta de GUTIP.</CardDescription>
@@ -42,15 +52,6 @@ export default async function LoginPage({
       <CardContent>
         <LoginForm next={next} />
       </CardContent>
-    </Centered>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-muted/40 px-4">
-      <Logo />
-      <Card className="w-full max-w-sm">{children}</Card>
-    </div>
+    </AuthLayout>
   );
 }

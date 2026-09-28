@@ -174,11 +174,16 @@ describe('sesión', () => {
     expect(await sessionUserFrom(auth, new Headers({ cookie }))).toBeNull();
   });
 
-  it('el registro público está deshabilitado', async () => {
+  it('el registro público crea solo la cuenta: sin sesión automática ni membresías', async () => {
     const email = `nuevo-${randomUUID()}@example.invalid`;
     const response = await post('/sign-up/email', { email, password: PASSWORD, name: 'Nuevo' });
-    expect(response.ok).toBe(false);
-    expect(await db.user.count({ where: { email } })).toBe(0);
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie().some((c) => c.startsWith('gutip.session_token='))).toBe(
+      false,
+    );
+    const user = await db.user.findUniqueOrThrow({ where: { email } });
+    expect(await db.session.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.membership.count({ where: { userId: user.id } })).toBe(0);
   });
 
   it('rechaza pedidos con la cookie de sesión desde otro origen (CSRF)', async () => {
