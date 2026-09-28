@@ -186,6 +186,12 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Permisos:** ver `OWNER/MANAGER/EDITOR/VIEWER` y `SELF` (solo lo suyo, `employeeScope`); preparar/entregar Dueño y Encargado, y el Editor si la versión de la política del período dice "Encargado y Editor" (`canHandleEnvelopes`); revertir solo Dueño/Encargado (`CAN.revertDelivery`).
 - **Concurrencia:** cada operación bloquea el reparto o el sobre (`FOR UPDATE`) y relee su estado: preparar/entregar a la vez no duplica eventos (test).
 
+### 6.9 Historial con la base (2026-09-28; sin migraciones, solo lectura)
+
+- **`/historial`** (menú "Historial"): repartos CLOSED y VOIDED (los abiertos no), del más nuevo al más viejo, con total, personas, sobres entregados, lo que falta entregar y quién/cuándo cerró. Filtros por URL (estado, rango de semanas, persona) y paginación de 20. **`/historial/[id]`**: resumen (totales, puntos, versión de la política y redondeo del snapshot), detalle por persona (horas, porción, puntos, %, bruto, adelanto, final, estado del sobre y si tuvo una entrega revertida), adelantos (registrado / descontado en este reparto / pendiente hoy) y actividad (cierre, preparación, entrega, reversión con motivo, anulación). "Ver sobres" lleva a `/sobres/[id]`.
+- **Fuente de verdad:** lo guardado al cerrar (`daily_distribution_items`, `weekly_settlements` con su `policy_snapshot`, `weekly_payments`/`weekly_payment_events`, `advances`/`advance_applications`). No usa el motor ni la política actual (lo verifica un test estático y uno que cambia la política después del cierre). Un reparto anulado se muestra con su motivo; si su reparto diario se desvinculó al anularlo, se lo encuentra por fechas.
+- **Permisos:** todos los roles leen; SELF solo lo suyo (sin totales ni otras personas). No hay ninguna acción: es solo lectura.
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:

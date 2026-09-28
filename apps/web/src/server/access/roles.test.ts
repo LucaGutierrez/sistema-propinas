@@ -19,6 +19,7 @@ describe('matriz de roles (ARCHITECTURE.md §9)', () => {
   });
 
   it('sobres: ver (SELF solo lo suyo), manejar según la política, revertir solo Dueño/Encargado', () => {
+    expect(ROLES.every((role) => roleAllowed(role, CAN.viewHistory))).toBe(true); // SELF: lo suyo
     const table = ROLES.map((role) => [
       role,
       roleAllowed(role, CAN.viewEnvelopes),

@@ -5,6 +5,7 @@
  */
 import {
   HandCoinsIcon,
+  HistoryIcon,
   LayoutDashboardIcon,
   MailIcon,
   PlusIcon,
@@ -24,6 +25,7 @@ export interface DatabaseNavItem {
 export const DATABASE_VENUE_NAV: readonly DatabaseNavItem[] = [
   { href: '/', label: 'Inicio', icon: LayoutDashboardIcon },
   { href: '/reparto', label: 'Repartir propinas', icon: HandCoinsIcon },
+  { href: '/historial', label: 'Historial', icon: HistoryIcon },
   { href: '/sobres', label: 'Sobres', icon: MailIcon },
   { href: '/personal', label: 'Personal', icon: UsersIcon },
   { href: '/configuracion', label: 'Configuración de distribución', icon: SlidersHorizontalIcon },
@@ -37,9 +39,9 @@ export const DATABASE_ACCOUNT_NAV: readonly DatabaseNavItem[] = [
 
 /**
  * Rutas de la demo: en modo base muestran "todavía no disponible" o redirigen (Semana → Reparto,
- * Mis locales → Mi sesión).
+ * Mis sobres → Sobres, Mis locales → Mi sesión). Historial ya es real en modo base.
  */
-export const DEMO_ONLY_ROUTES = ['/semana', '/historial', '/acceso', '/mis-sobres', '/locales'];
+export const DEMO_ONLY_ROUTES = ['/semana', '/acceso', '/mis-sobres', '/locales'];
 
 export function isActiveRoute(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/';

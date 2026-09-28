@@ -6,6 +6,7 @@
  * personas con su puesto y porción, horas, propina y adelantos pendientes). La usan la pantalla
  * (vista previa en vivo) y el cierre (dentro de su transacción): los dos calculan con lo mismo.
  */
+import { divRoundHalfUp } from '@/lib/decimal';
 import type { PreviewPerson } from '@/lib/distribution/period-preview';
 import {
   hoursText,
@@ -416,7 +417,7 @@ export async function getClosedPeriodView(
       factor: i.portionSnapshot.toFixed(10).replace(/0+$/, '').replace(/\.$/, '').replace('.', ','),
       pointsE6: toE(i.points, 6),
       // percentage es una fracción 0..1 con 6 decimales → centésimas de punto porcentual.
-      percentE2: (BigInt(toE(i.percentage, 6)) / 100n).toString(),
+      percentE2: divRoundHalfUp(BigInt(toE(i.percentage, 6)), 100n).toString(),
       amountCents: i.amountCents.toString(),
       advancesCents: i.advancesCents.toString(),
       finalCents: i.finalCents.toString(),

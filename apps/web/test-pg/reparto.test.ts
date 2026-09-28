@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { AccessDenied, authorize, type AccessContext } from '@/server/access/access';
 import { CAN, type Role } from '@/server/access/roles';
 import type { SessionUser } from '@/server/auth/session';
+import { getHistoryDetail } from '@/server/history/repository';
 import {
   getClosedPeriodView,
   getOpenPeriodView,
@@ -351,6 +352,11 @@ describe('cerrar el reparto', () => {
       finalCents: '4061388',
       paymentStatus: 'PENDING',
     });
+    // Porcentaje guardado 0,220082 → 22,01 % (redondeo, no truncado), también en el historial.
+    expect(detail?.rows.find((row) => row.name === 'Leo')?.percentE2).toBe('2201');
+    const history = await getHistoryDetail(db, await as(r.owner, CAN.viewHistory), settlementId);
+    expect(history?.people.find((p) => p.name === 'Leo')?.percentE2).toBe('2201');
+    expect(history?.people.find((p) => p.name === 'Marcos')?.percentE2).toBe('530');
     // Ya no hay reparto abierto; el inicio lo lista entre los cerrados.
     expect(await getOpenPeriodView(db, await as(r.owner, CAN.viewPeriods))).toBeNull();
     const overview = await getPeriodOverview(db, r.id);

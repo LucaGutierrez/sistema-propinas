@@ -49,6 +49,8 @@ export const CAN = {
    * del período lo permita (`envelope_handlers = MANAGER_AND_EDITOR`): ver `canHandleEnvelopes`.
    */
   handleEnvelopes: ['OWNER', 'MANAGER', 'EDITOR'],
+  /** Historial (solo lectura): todo el local; SELF solo lo suyo (ver `employeeScope`). */
+  viewHistory: ['OWNER', 'MANAGER', 'EDITOR', 'VIEWER', 'SELF'],
   /** Revertir una entrega (con motivo): siempre solo Dueño y Encargado (DATABASE.md §6). */
   revertDelivery: ['OWNER', 'MANAGER'],
 } as const satisfies Record<string, readonly Role[]>;
