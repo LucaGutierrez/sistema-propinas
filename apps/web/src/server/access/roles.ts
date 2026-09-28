@@ -32,6 +32,10 @@ export const CAN = {
   editDistributionConfig: ['OWNER', 'MANAGER'],
   /** Ver datos de empleados: SELF solo el suyo (ver `employeeScope`). */
   viewEmployees: ['OWNER', 'MANAGER', 'EDITOR', 'VIEWER', 'SELF'],
+  /** Pantalla "Personal": todo el equipo del local (SELF no: solo ve sus sobres). */
+  viewStaff: WHOLE_RESTAURANT,
+  /** Agregar personas, cambiar su puesto, darlas de baja o reactivarlas. */
+  manageStaff: ['OWNER', 'MANAGER'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export function roleAllowed(role: Role, roles: readonly Role[]): boolean {
