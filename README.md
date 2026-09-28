@@ -16,7 +16,7 @@ Aplicación web para gestionar y distribuir propinas entre el personal de restau
 | `packages/tip-engine` — motor de cálculo (TypeScript puro, `BigInt`, sin dependencias) | Implementado y testeado |
 | `apps/web/prisma/schema.prisma` — esquema completo | Validado; cliente generado |
 | `apps/web/prisma/sql/constraints.sql` — CHECK, índices parciales, triggers (conjunto vigente; `0001_*`/`0002_*` son los deltas de cada migración) | Probado con `pnpm test:db` (PGlite) y `pnpm test:pg` (PostgreSQL real) |
-| `apps/web/prisma/migrations/` — inicial + política de distribución versionada | Probadas con `prisma migrate deploy` en `test:pg`; **las dos aplicadas en Neon production** |
+| `apps/web/prisma/migrations/` — inicial + política de distribución versionada + autenticación (Better Auth) | Probadas con `prisma migrate deploy` en `test:pg`; **las tres aplicadas en Neon production** |
 | `apps/web/test-db/` — tests de base de datos (PGlite) | Implementados; corren en el CI |
 | `apps/web/test-pg/` — migraciones, concurrencia e invariante I11 (PostgreSQL real) | Implementados; corren en el CI (job `postgres`, PostgreSQL 18) |
 | Excel de referencia | Pendiente: colocar el `.xlsx` en `reference/` (no se versiona) |
@@ -100,7 +100,9 @@ reference/             Excel real del restaurante (solo local, ignorado por git)
 
 - CI (GitHub Actions): el job `check` corre lint, typecheck, `test`, `test:db` y Prisma; el job
   `postgres` corre `test:pg` sobre un contenedor PostgreSQL 18 (misma versión mayor que Neon).
-- En Neon production están aplicadas las dos migraciones (`20260925000000_init` y
-  `20260926000000_distribution_policies`, esta el 2026-09-26, validada antes en la branch de prueba
-  `test-distribution-policies`). `prisma migrate status` está al día, `prisma migrate diff` contra
-  `schema.prisma` es vacío y la base no tiene datos de negocio. Detalle en [DATABASE.md](DATABASE.md) §10.
+- En Neon production están aplicadas las tres migraciones (`20260925000000_init`,
+  `20260926000000_distribution_policies` —validada en la branch `test-distribution-policies`— y
+  `20260928000000_auth`, el 2026-09-27, validada en la branch `auth-test`). `prisma migrate status` está al
+  día y `prisma migrate diff` contra `schema.prisma` es vacío. Production tiene el restaurante real con su
+  OWNER (con credencial de Better Auth) y la política v1/v2; el login real se verificó desde la app local.
+  La app todavía no está desplegada. Detalle en [DATABASE.md](DATABASE.md) §10.

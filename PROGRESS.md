@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-26 (Fase 1 en curso como demo en el navegador. Política de distribución versionada por restaurante — CONFIG-MODEL.md; Library es el caso de referencia. **Persistencia de la política en Prisma** con la migración `20260926000000_distribution_policies`, **aplicada en Neon production** tras validarla en la branch `test-distribution-policies`. **"Configuración de distribución" ya lee y escribe la base** con Prisma (§6.4); las demás pantallas siguen en la demo; Neon todavía no tiene restaurante inicializado).
+Última actualización: 2026-09-27 (Fase 2 cerrada: Better Auth + acceso real con `requireAccess`; migración `20260928000000_auth` aplicada en Neon production; login real del OWNER verificado contra production. Pendiente: despliegue.)
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
@@ -158,7 +158,7 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Tests:** web 91 (planificadores de cambios, plantilla estándar, traducción a la base), `test:pg` 33 (14 del servicio con Prisma: ver `DATABASE.md` §11). Probado además en el navegador contra un PostgreSQL local descartable: cambiar una porción crea la versión 2 y conserva la 1.
 - **Pendiente:** inicializar el restaurante en Neon (con autorización); migrar Personal, Semana, adelantos y sobres; Better Auth (`requireAccess`).
 
-### 6.5 Fase 2 — autenticación y acceso real con Better Auth (2026-09-27, sin commit; migración NO aplicada en Neon)
+### 6.5 Fase 2 — autenticación y acceso real con Better Auth (2026-09-27; commit `934f1a6`; aplicada en Neon production)
 
 - **Better Auth 1.7.6** (única dependencia nueva) sobre nuestras tablas: `users` es su modelo `user` (sin usuarios paralelos); tablas nuevas `sessions`, `accounts`, `verifications`, `auth_rate_limits`. Email + contraseña (scrypt), registro público deshabilitado, sesión de 7 días en Postgres, cookie `httpOnly`/`sameSite=lax`/`secure` en producción, control de origen y límite de intentos en Postgres. Sin plugin de organizaciones.
 - **Acceso:** `src/server/access/` — `requireAccess({ restaurantId, roles })` = sesión real → membresía → rol → contexto tipado; sin sesión → login, sin membresía / otro restaurante → 404, rol insuficiente → sin permiso. Roles `OWNER` (uno por restaurante), `MANAGER`, `EDITOR`, `VIEWER`, `SELF` (con `memberships.employee_id`, solo su empleado). Restaurante activo: preferencia en cookie validada contra las membresías. Alta de restaurante (`server/restaurants/service.ts`) crea la membresía OWNER.
@@ -166,6 +166,8 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **UI mínima:** `/login`, `/cuenta` (sesión, restaurantes y rol, restaurante activo, cerrar sesión) y una barra de sesión en Configuración. El resto del shell sigue siendo el de la demo.
 - **Transición del dueño existente (Neon):** migración `20260928000000_auth` no destructiva (conserva usuarios, membresías y roles; guarda si hay `ADMIN` o emails con mayúsculas) + `db:operator-password` (agrega la contraseña al usuario existente, sin duplicarlo). `db:bootstrap` se conserva (no agrega un segundo OWNER).
 - **Verificado localmente:** lint, format, typecheck, `test` (web 102 + tip-engine 257), `test:db` 270, `test:pg` 66 (PostgreSQL 18 descartable), prisma validate/generate, build. Migración probada sobre una copia local con los mismos datos que Neon. Navegador (base local): login, error de contraseña, Configuración como OWNER (cambio → versión nueva a su nombre) y como VIEWER (sin edición), `/cuenta`, logout (borra la sesión).
+
+- **Neon production (2026-09-27):** migración `20260928000000_auth` validada primero en la branch `auth-test` (creada desde production con sus datos) y luego aplicada en production con guardas previas; `migrate status` al día, `migrate diff` vacío, huella de datos idéntica (detalle en `DATABASE.md` §10, "Estado en Neon — autenticación"). El OWNER existente tiene su credencial (`db:operator-password`, sin duplicar el usuario). **Login real verificado** desde la app local contra production: sesión creada, `/cuenta` y `/configuracion` (política v2 real, Salón 0,025) correctos, logout borra la sesión. Falta el despliegue (Vercel).
 
 ## 7. Qué falta de la Fase 0
 
@@ -243,7 +245,8 @@ pnpm --filter @propinas/web build
 
 ## 11. Pendiente después del núcleo de Better Auth (§6.5)
 
-- **Neon (con autorización):** aplicar `20260928000000_auth` (primero en una branch de prueba, como las anteriores), luego `db:operator-password --confirm --allow-remote` para el dueño existente. Definir `BETTER_AUTH_SECRET`/`BETTER_AUTH_URL` del entorno.
+- ~~**Neon:** aplicar `20260928000000_auth` y definir la credencial del dueño~~ (hecho el 2026-09-27, §6.5). La branch `auth-test` quedó migrada y ya no hace falta: se puede borrar desde la consola de Neon.
+- **Despliegue (Vercel, con autorización):** `DATABASE_URL`, `GUTIP_DATA_SOURCE=database`, `BETTER_AUTH_URL` (dominio público `https://…`) y un `BETTER_AUTH_SECRET` propio del entorno, distinto del local.
 - **Invitaciones** (tablas propias) y alta de miembros con rol; **registro** público (hoy deshabilitado).
 - **Email** (A1): verificación y recuperación de contraseña con Better Auth + `Mailer`.
 - **IP del cliente para el límite de intentos** según el hosting (encabezado confiable / proxies de confianza): sin eso, en producción todos comparten un contador por ruta.
@@ -255,11 +258,10 @@ pnpm --filter @propinas/web build
 
 ## NEXT STEP
 
-**Cuando retomemos: Fase 1 cerrada (Configuración de distribución con Prisma + Neon; Neon tiene el restaurante real con OWNER y la política v1/v2). Fase 2 (Better Auth + acceso real) implementada localmente (§6.5), sin commit y sin aplicar en Neon.**
+**Cuando retomemos: Fase 1 y Fase 2 cerradas. Neon production tiene las 3 migraciones, el restaurante real con su OWNER (con credencial de Better Auth) y la política v1/v2; el login real contra production se verificó desde la app local. La app todavía no está desplegada.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (web 102 + tip-engine 257), `pnpm test:db` (270), `pnpm test:pg` (66, PostgreSQL descartable en UTF8), `pnpm prisma validate/generate`, `pnpm --filter @propinas/web build`.
-2. **Revisión del usuario** de la Fase 2 → commit / push / CI.
-3. **Neon (solo con autorización):** migración `20260928000000_auth` (branch de prueba → production) y `db:operator-password --confirm --allow-remote` para el dueño existente (§11).
-4. **Siguientes pantallas** con `requireAccess` (Personal, Semana…) y las decisiones pendientes de §10/§11.
+1. **Verificar el estado:** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (web 103 + tip-engine 257), `pnpm test:db` (270), `pnpm test:pg` (67, PostgreSQL descartable en UTF8), `pnpm prisma validate/generate`, `pnpm --filter @propinas/web build`.
+2. **Despliegue (solo con autorización):** Vercel con sus variables (§11) y el encabezado confiable de IP para el límite de intentos.
+3. **Siguientes pantallas** con `requireAccess` (Personal, Semana…) y las decisiones pendientes de §10/§11.
 
 No se modifica `schema.prisma`, las migraciones ni Neon sin aprobación explícita del usuario.
