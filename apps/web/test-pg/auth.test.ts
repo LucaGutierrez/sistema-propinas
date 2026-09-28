@@ -6,6 +6,7 @@ import { ROLES } from '@/server/access/roles';
 import { createAuth, type Auth } from '@/server/auth/auth';
 import { setCredentialPassword } from '@/server/auth/credentials';
 import { sessionUserFrom } from '@/server/auth/session';
+import { trustedOriginsFrom } from '@/server/auth/trusted-origins';
 import { bootstrapRestaurant } from '@/server/policy/service';
 
 /*
@@ -197,6 +198,65 @@ describe('sesión', () => {
     );
     expect(noOrigin.status).toBe(403);
     expect(await sessionUserFrom(auth, new Headers({ cookie }))).not.toBeNull();
+  });
+
+  it('orígenes en Vercel: dominio canónico y hosts exactos del deployment sí; otros no', async () => {
+    const CANONICAL = 'https://sistema-propinas.vercel.app';
+    const DEPLOYMENT = 'https://sistema-propinas-3tjabc123-guti3.vercel.app';
+    const BRANCH = 'https://sistema-propinas-git-main-guti3.vercel.app';
+    const secret = `test-secret-${randomUUID()}-${randomUUID()}`;
+    // Como en Vercel: BETTER_AUTH_URL = dominio canónico; hosts del deployment desde el entorno.
+    const vercelAuth = createAuth(db, {
+      secret,
+      baseURL: CANONICAL,
+      trustedOrigins: trustedOriginsFrom({
+        NODE_ENV: 'production',
+        VERCEL: '1',
+        VERCEL_URL: DEPLOYMENT.slice('https://'.length),
+        VERCEL_BRANCH_URL: BRANCH.slice('https://'.length),
+        VERCEL_PROJECT_PRODUCTION_URL: CANONICAL.slice('https://'.length),
+      }),
+    });
+    // La configuración anterior (solo BETTER_AUTH_URL): reproduce el "Invalid origin".
+    const before = createAuth(db, { secret, baseURL: CANONICAL });
+    const owner = await bootstrappedOwner();
+    await setCredentialPassword(db, owner.email, PASSWORD);
+
+    // Login desde el host que usa el navegador. Con una cookie ya presente (p. ej. la de la
+    // protección de deployments de Vercel), Better Auth exige que el origen sea de confianza.
+    const login = (instance: Auth, origin: string) =>
+      instance.handler(
+        new Request(`${origin}/api/auth/sign-in/email`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            origin,
+            cookie: '_vercel_jwt=prueba',
+            'x-forwarded-for': `203.0.113.${nextIp++}`,
+          },
+          body: JSON.stringify({ email: owner.email, password: PASSWORD }),
+        }),
+      );
+
+    expect((await login(before, DEPLOYMENT)).status).toBe(403);
+    for (const origin of [CANONICAL, DEPLOYMENT, BRANCH]) {
+      expect({ origin, status: (await login(vercelAuth, origin)).status }).toEqual({
+        origin,
+        status: 200,
+      });
+    }
+    for (const origin of [
+      'https://attacker.vercel.app',
+      'https://sistema-propinas-evil.vercel.app',
+      'https://evil.example',
+      'http://sistema-propinas.vercel.app',
+      'http://localhost:3000',
+    ]) {
+      expect({ origin, status: (await login(vercelAuth, origin)).status }).toEqual({
+        origin,
+        status: 403,
+      });
+    }
   });
 
   it('limita los intentos de login por IP (guardado en auth_rate_limits)', async () => {

@@ -18,6 +18,7 @@ import type { PrismaClient } from '@prisma/client';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getDb } from '../db';
+import { trustedOriginsFrom } from './trusted-origins';
 
 export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_PASSWORD_LENGTH = 128;
@@ -29,6 +30,8 @@ export interface AuthOverrides {
   /** Solo para tests: en la aplicación salen de BETTER_AUTH_SECRET / BETTER_AUTH_URL. */
   secret?: string;
   baseURL?: string;
+  /** Solo para tests: en la aplicación salen del entorno (`trustedOriginsFrom`). */
+  trustedOrigins?: string[];
 }
 
 export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
@@ -36,6 +39,8 @@ export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
     appName: 'GUTIP',
     secret: overrides.secret,
     baseURL: overrides.baseURL,
+    // Hosts exactos del deployment de Vercel (y localhost en desarrollo); ver trusted-origins.ts.
+    trustedOrigins: overrides.trustedOrigins ?? trustedOriginsFrom(process.env),
     database: prismaAdapter(db, { provider: 'postgresql' }),
     emailAndPassword: {
       enabled: true,
