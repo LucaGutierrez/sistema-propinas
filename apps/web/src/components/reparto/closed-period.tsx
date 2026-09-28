@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeftIcon, CheckCircle2Icon, LockIcon, PrinterIcon } from 'lucide-react';
+import { ArrowLeftIcon, CheckCircle2Icon, LockIcon, MailIcon, PrinterIcon } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -55,8 +55,8 @@ export function ClosedPeriod({
           <div>
             <p className="font-medium">Reparto cerrado y guardado.</p>
             <p className="text-muted-foreground">
-              Ya quedó registrado cuánto recibe cada persona. Podés imprimir la planilla para armar
-              los sobres.
+              Ya quedó registrado cuánto recibe cada persona. El siguiente paso es preparar y
+              entregar los sobres.
             </p>
           </div>
         </div>
@@ -82,10 +82,20 @@ export function ClosedPeriod({
             {view.closedByName ? ` por ${view.closedByName}` : ''}
           </p>
         </div>
-        <Button variant="outline" onClick={() => window.print()} className="print:hidden">
-          <PrinterIcon />
-          Imprimir planilla
-        </Button>
+        <div className="flex flex-wrap gap-2 print:hidden">
+          <Button variant="outline" onClick={() => window.print()}>
+            <PrinterIcon />
+            Imprimir planilla
+          </Button>
+          {view.status === 'CLOSED' ? (
+            <Button asChild>
+              <Link href={`/sobres/${view.settlementId}`}>
+                <MailIcon />
+                Preparar y entregar sobres
+              </Link>
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <Card className="gap-0 py-0">
@@ -172,7 +182,7 @@ export function ClosedPeriod({
 
       <p className="mt-6 text-xs text-muted-foreground print:hidden">
         Un reparto cerrado no se puede modificar: así lo que se entrega siempre coincide con lo
-        registrado. La preparación y entrega de sobres llega en la próxima versión.
+        registrado. Los sobres se preparan y entregan en Sobres, con estos mismos importes.
       </p>
     </div>
   );

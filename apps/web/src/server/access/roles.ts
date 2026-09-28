@@ -42,8 +42,29 @@ export const CAN = {
   editPeriod: ['OWNER', 'MANAGER', 'EDITOR'],
   /** Cerrar un reparto (queda congelado y genera los sobres). */
   closePeriod: ['OWNER', 'MANAGER'],
+  /** Ver sobres: todo el local; SELF solo los suyos (ver `employeeScope`). */
+  viewEnvelopes: ['OWNER', 'MANAGER', 'EDITOR', 'VIEWER', 'SELF'],
+  /**
+   * Preparar, deshacer la preparación y entregar sobres. El Editor además necesita que la política
+   * del período lo permita (`envelope_handlers = MANAGER_AND_EDITOR`): ver `canHandleEnvelopes`.
+   */
+  handleEnvelopes: ['OWNER', 'MANAGER', 'EDITOR'],
+  /** Revertir una entrega (con motivo): siempre solo Dueño y Encargado (DATABASE.md §6). */
+  revertDelivery: ['OWNER', 'MANAGER'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export function roleAllowed(role: Role, roles: readonly Role[]): boolean {
   return roles.includes(role);
+}
+
+/**
+ * ¿Puede preparar / entregar los sobres de un período? Dueño y Encargado siempre; el Editor solo
+ * si la versión de la política del período dice "Encargado y Editor".
+ */
+export function canHandleEnvelopes(
+  role: Role,
+  envelopeHandlers: 'MANAGER_ONLY' | 'MANAGER_AND_EDITOR',
+): boolean {
+  if (!roleAllowed(role, CAN.handleEnvelopes)) return false;
+  return role !== 'EDITOR' || envelopeHandlers === 'MANAGER_AND_EDITOR';
 }

@@ -178,6 +178,14 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Permisos:** ver repartos `OWNER/MANAGER/EDITOR/VIEWER`; cargar `OWNER/MANAGER/EDITOR`; cerrar `OWNER/MANAGER` (`CAN.viewPeriods/editPeriod/closePeriod`).
 - **Rendimiento:** sesión y acceso memoizados por pedido (`cache`), restaurante activo en una sola lectura, `loading.tsx`/`error.tsx`, middleware que manda al login sin renderizar si no hay cookie, rate limit fuera de `/get-session`, guardar horas/propina sin re-render, `apps/web/vercel.json` con `regions: ["gru1"]` (misma región que Neon). Consultas por pantalla (local): `/` 21 → 12, `/personal` 20 → 10, `/configuracion` 21 → 11.
 
+### 6.8 Sobres con la base (2026-09-28; sin migraciones)
+
+- **`/sobres`** (menú "Sobres"): repartos cerrados con cuántos sobres faltan preparar/entregar; **`/sobres/[id]`**: un sobre por persona con importe (propina − adelanto), estado (Pendiente / Preparado / Entregado / Sin importe), quién y cuándo, historial. "Preparar todos", preparar uno, deshacer la preparación (motivo), entregar (confirmación) y revertir la entrega (motivo). Desde el reparto cerrado: "Preparar y entregar sobres". `/mis-sobres` redirige a `/sobres`.
+- **Modelo existente:** `weekly_payments` (los crea el cierre del reparto, PENDING, con los importes de `daily_distribution_items`) + `weekly_payment_events` (un evento por transición) + `audit_log` (entregas y reversiones). Sobres **no recalcula nada**: si a un reparto cerrado le faltara un sobre, se crea desde sus ítems (idempotente, `@@unique(settlement_id, employee_id)`).
+- **Reglas:** `PENDING → PREPARED → DELIVERED`; `PREPARED → PENDING` y `DELIVERED → PREPARED` con motivo (≥ 10) — la reversión además con `authorized_by` y audit_log. Solo repartos CLOSED (abierto: todavía no hay sobres; VOIDED: congelado). Los importes y la entrega los congela la base (`fn_weekly_payments_guard`).
+- **Permisos:** ver `OWNER/MANAGER/EDITOR/VIEWER` y `SELF` (solo lo suyo, `employeeScope`); preparar/entregar Dueño y Encargado, y el Editor si la versión de la política del período dice "Encargado y Editor" (`canHandleEnvelopes`); revertir solo Dueño/Encargado (`CAN.revertDelivery`).
+- **Concurrencia:** cada operación bloquea el reparto o el sobre (`FOR UPDATE`) y relee su estado: preparar/entregar a la vez no duplica eventos (test).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:

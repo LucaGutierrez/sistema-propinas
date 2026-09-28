@@ -25,6 +25,7 @@ describe('modo base de datos: sin demo', () => {
     expect(DATABASE_VENUE_NAV.map((i) => i.href)).toEqual([
       '/',
       '/reparto',
+      '/sobres',
       '/personal',
       '/configuracion',
     ]);

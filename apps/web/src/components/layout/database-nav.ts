@@ -6,6 +6,7 @@
 import {
   HandCoinsIcon,
   LayoutDashboardIcon,
+  MailIcon,
   PlusIcon,
   SlidersHorizontalIcon,
   UserRoundIcon,
@@ -23,6 +24,7 @@ export interface DatabaseNavItem {
 export const DATABASE_VENUE_NAV: readonly DatabaseNavItem[] = [
   { href: '/', label: 'Inicio', icon: LayoutDashboardIcon },
   { href: '/reparto', label: 'Repartir propinas', icon: HandCoinsIcon },
+  { href: '/sobres', label: 'Sobres', icon: MailIcon },
   { href: '/personal', label: 'Personal', icon: UsersIcon },
   { href: '/configuracion', label: 'Configuración de distribución', icon: SlidersHorizontalIcon },
 ];
