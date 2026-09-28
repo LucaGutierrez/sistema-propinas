@@ -36,6 +36,12 @@ export const CAN = {
   viewStaff: WHOLE_RESTAURANT,
   /** Agregar personas, cambiar su puesto, darlas de baja o reactivarlas. */
   manageStaff: ['OWNER', 'MANAGER'],
+  /** Ver los repartos del local (el abierto y los cerrados). */
+  viewPeriods: WHOLE_RESTAURANT,
+  /** Empezar un reparto y cargar propina, horas y adelantos (el Editor carga; no cierra). */
+  editPeriod: ['OWNER', 'MANAGER', 'EDITOR'],
+  /** Cerrar un reparto (queda congelado y genera los sobres). */
+  closePeriod: ['OWNER', 'MANAGER'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export function roleAllowed(role: Role, roles: readonly Role[]): boolean {

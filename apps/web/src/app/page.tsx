@@ -5,9 +5,10 @@ import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/ca
 import { Dashboard } from '@/components/week/dashboard';
 import { AccessDenied, type AccessContext } from '@/server/access/access';
 import { requireAccess } from '@/server/access/request';
-import { CAN, ROLE_LABEL } from '@/server/access/roles';
+import { CAN, ROLE_LABEL, roleAllowed } from '@/server/access/roles';
 import { databaseEnabled } from '@/server/context';
 import { getDb } from '@/server/db';
+import { getPeriodOverview } from '@/server/periods/repository';
 import { getRestaurantSummary } from '@/server/restaurants/summary';
 
 // La fuente de datos (demo o base) y la sesión se resuelven en cada pedido.
@@ -37,7 +38,18 @@ export default async function HomePage() {
     );
   }
 
-  const summary = await getRestaurantSummary(getDb(), access.restaurantId);
+  const db = getDb();
+  const [summary, overview] = await Promise.all([
+    getRestaurantSummary(db, access.restaurantId),
+    getPeriodOverview(db, access.restaurantId),
+  ]);
   if (!summary) redirect('/crear-restaurante');
-  return <DatabaseHome summary={summary} role={ROLE_LABEL[access.role]} />;
+  return (
+    <DatabaseHome
+      summary={summary}
+      overview={overview}
+      role={ROLE_LABEL[access.role]}
+      canEdit={roleAllowed(access.role, CAN.editPeriod)}
+    />
+  );
 }

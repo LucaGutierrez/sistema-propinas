@@ -59,6 +59,32 @@ export function mondayOf(iso: string): string {
   return addDays(iso, -offset);
 }
 
+/**
+ * Primer día del período que contiene `iso`, con períodos que empiezan el día ISO `startWeekday`
+ * (1 = lunes … 7 = domingo; lo fija la política de distribución).
+ */
+export function periodStartOf(iso: string, startWeekday: number): string {
+  const date = parseIsoDate(iso);
+  if (!date) throw new Error(`Fecha inválida: ${iso}`);
+  if (!Number.isInteger(startWeekday) || startWeekday < 1 || startWeekday > 7) {
+    throw new Error(`Día de inicio inválido: ${startWeekday}`);
+  }
+  const isoWeekday = ((date.getUTCDay() + 6) % 7) + 1;
+  return addDays(iso, -((isoWeekday - startWeekday + 7) % 7));
+}
+
+/** Fecha de hoy ("2026-09-28") en una zona horaria IANA (la del restaurante), para el servidor. */
+export function todayInTimeZone(timeZone: string, now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
 /** Fecha de hoy en el calendario local del navegador. */
 export function todayIso(now: Date = new Date()): string {
   const y = now.getFullYear();

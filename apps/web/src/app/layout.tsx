@@ -1,12 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import { AppShell } from '@/components/layout/app-shell';
 import type { ShellAccount } from '@/components/layout/database-shell';
-import { AccessDenied, resolveAccess } from '@/server/access/access';
-import { activeRestaurantId } from '@/server/access/request';
-import { ROLE_LABEL, ROLES } from '@/server/access/roles';
+import { getActiveAccess } from '@/server/access/request';
+import { ROLE_LABEL } from '@/server/access/roles';
 import { getSessionUser } from '@/server/auth/session';
 import { databaseEnabled } from '@/server/context';
-import { getDb } from '@/server/db';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -22,26 +20,21 @@ export const viewport: Viewport = {
 // prerenderizada con la demo en un servidor que usa la base.
 export const dynamic = 'force-dynamic';
 
-/** Identidad del encabezado en modo base: usuario de la sesión y su rol en el restaurante activo. */
+/**
+ * Identidad del encabezado en modo base: usuario de la sesión y su rol en el restaurante activo.
+ * Usa el MISMO acceso memoizado del pedido que la página (`getActiveAccess`): sin consultas extra.
+ */
 async function shellAccount(): Promise<ShellAccount | null> {
   const user = await getSessionUser();
   if (!user) return null;
-  const restaurantId = await activeRestaurantId(user);
-  if (!restaurantId)
+  const active = await getActiveAccess();
+  if (!active.ok)
     return { userName: user.name, roleLabel: 'Sin restaurante', restaurantName: null };
-  try {
-    const access = await resolveAccess(getDb(), user, { restaurantId, roles: ROLES });
-    return {
-      userName: user.name,
-      roleLabel: ROLE_LABEL[access.role],
-      restaurantName: access.restaurantName,
-    };
-  } catch (error) {
-    if (error instanceof AccessDenied) {
-      return { userName: user.name, roleLabel: 'Sin restaurante', restaurantName: null };
-    }
-    throw error;
-  }
+  return {
+    userName: user.name,
+    roleLabel: ROLE_LABEL[active.access.role],
+    restaurantName: active.access.restaurantName,
+  };
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

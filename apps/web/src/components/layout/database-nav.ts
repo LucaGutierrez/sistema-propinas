@@ -4,6 +4,7 @@
  * ficticios. Sin dependencias de la demo (lo verifica un test).
  */
 import {
+  HandCoinsIcon,
   LayoutDashboardIcon,
   PlusIcon,
   SlidersHorizontalIcon,
@@ -21,6 +22,7 @@ export interface DatabaseNavItem {
 /** Secciones del restaurante activo. */
 export const DATABASE_VENUE_NAV: readonly DatabaseNavItem[] = [
   { href: '/', label: 'Inicio', icon: LayoutDashboardIcon },
+  { href: '/reparto', label: 'Repartir propinas', icon: HandCoinsIcon },
   { href: '/personal', label: 'Personal', icon: UsersIcon },
   { href: '/configuracion', label: 'Configuración de distribución', icon: SlidersHorizontalIcon },
 ];
@@ -31,7 +33,10 @@ export const DATABASE_ACCOUNT_NAV: readonly DatabaseNavItem[] = [
   { href: '/crear-restaurante', label: 'Crear restaurante', icon: PlusIcon },
 ];
 
-/** Rutas que todavía usan la demo: en modo base muestran "todavía no disponible" o redirigen. */
+/**
+ * Rutas de la demo: en modo base muestran "todavía no disponible" o redirigen (Semana → Reparto,
+ * Mis locales → Mi sesión).
+ */
 export const DEMO_ONLY_ROUTES = ['/semana', '/historial', '/acceso', '/mis-sobres', '/locales'];
 
 export function isActiveRoute(pathname: string, href: string): boolean {

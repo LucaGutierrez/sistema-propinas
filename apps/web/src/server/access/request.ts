@@ -3,12 +3,23 @@
  * Toma la sesión real del pedido (cookie validada por Better Auth), resuelve el restaurante y
  * verifica membresía y rol (`authorize`). La interfaz puede ocultar botones, pero cada acción
  * del servidor vuelve a llamar acá.
+ *
+ * Rendimiento: el acceso al restaurante ACTIVO se resuelve una sola vez por pedido (`cache` de
+ * React) y se reutiliza en el layout y en la página; cada llamada vuelve a comprobar el rol que
+ * pide. Nada se guarda entre pedidos.
  */
 import { cookies } from 'next/headers';
+import { cache } from 'react';
 import { getSessionUser, type SessionUser } from '../auth/session';
 import { getDb } from '../db';
-import { authorize, pickActiveRestaurant, type AccessContext } from './access';
-import type { Role } from './roles';
+import {
+  AccessDenied,
+  assertRole,
+  authorize,
+  pickActiveRestaurant,
+  type AccessContext,
+} from './access';
+import { ROLES, type Role } from './roles';
 
 /** Restaurante elegido por el usuario (solo una preferencia; se valida contra memberships). */
 export const ACTIVE_RESTAURANT_COOKIE = 'gutip_restaurant';
@@ -36,6 +47,25 @@ export async function activeRestaurantId(user: SessionUser): Promise<string | nu
   return pickActiveRestaurant(getDb(), user.id, await preferredRestaurantId());
 }
 
+type ActiveAccess = { ok: true; access: AccessContext } | { ok: false; error: AccessDenied };
+
+/**
+ * Acceso del usuario de la sesión a su restaurante activo, con su rol (cualquiera), una sola vez
+ * por pedido. Los errores de acceso también se memorizan (se vuelven a lanzar en cada llamada).
+ */
+export const getActiveAccess = cache(async (): Promise<ActiveAccess> => {
+  try {
+    const access = await authorize(getDb(), await getSessionUser(), {
+      preferredRestaurantId: await preferredRestaurantId(),
+      roles: ROLES,
+    });
+    return { ok: true, access };
+  } catch (error) {
+    if (error instanceof AccessDenied) return { ok: false, error };
+    throw error;
+  }
+});
+
 /**
  * Exige sesión + membresía con uno de `roles` en `restaurantId` (o, si no se indica, en el
  * restaurante activo del usuario). Lanza `AccessDenied` si no.
@@ -44,8 +74,14 @@ export async function requireAccess(input: {
   restaurantId?: string;
   roles: readonly Role[];
 }): Promise<AccessContext> {
-  return authorize(getDb(), await getSessionUser(), {
-    ...input,
-    preferredRestaurantId: await preferredRestaurantId(),
-  });
+  if (input.restaurantId !== undefined) {
+    return authorize(getDb(), await getSessionUser(), {
+      restaurantId: input.restaurantId,
+      roles: input.roles,
+    });
+  }
+  const active = await getActiveAccess();
+  if (!active.ok) throw active.error;
+  assertRole(active.access, input.roles);
+  return active.access;
 }

@@ -66,7 +66,6 @@ export async function resolveAccess(
       role: true,
       employeeId: true,
       restaurant: { select: { name: true, archivedAt: true } },
-      user: { select: { name: true } },
     },
   });
   if (!membership || membership.restaurant.archivedAt) throw new AccessDenied('NOT_FOUND');
@@ -76,7 +75,8 @@ export async function resolveAccess(
     restaurantId: input.restaurantId,
     restaurantName: membership.restaurant.name,
     userId: user.id,
-    userName: membership.user.name,
+    // El nombre sale de la sesión (la misma fila de `users` que valida Better Auth).
+    userName: user.name,
     userEmail: user.email,
     role: membership.role,
     membershipId: membership.id,
@@ -98,12 +98,37 @@ export async function authorize(
   input: { restaurantId?: string; preferredRestaurantId?: string; roles: readonly Role[] },
 ): Promise<AccessContext> {
   if (!user) throw new AccessDenied('UNAUTHENTICATED');
-  const restaurantId =
-    input.restaurantId ?? (await pickActiveRestaurant(db, user.id, input.preferredRestaurantId));
-  if (!restaurantId) {
+  if (input.restaurantId !== undefined) {
+    return resolveAccess(db, user, { restaurantId: input.restaurantId, roles: input.roles });
+  }
+  // Restaurante activo: una sola lectura de las membresías (elegir y validar a la vez).
+  const memberships = await db.membership.findMany({
+    where: { userId: user.id, restaurant: { archivedAt: null } },
+    orderBy: [{ createdAt: 'asc' }, { restaurantId: 'asc' }],
+    select: {
+      id: true,
+      role: true,
+      employeeId: true,
+      restaurantId: true,
+      restaurant: { select: { name: true } },
+    },
+  });
+  const chosen =
+    memberships.find((m) => m.restaurantId === input.preferredRestaurantId) ?? memberships[0];
+  if (!chosen) {
     throw new AccessDenied('NOT_FOUND', 'Tu usuario todavía no tiene acceso a ningún restaurante.');
   }
-  return resolveAccess(db, user, { restaurantId, roles: input.roles });
+  if (!roleAllowed(chosen.role, input.roles)) throw new AccessDenied('FORBIDDEN');
+  return {
+    restaurantId: chosen.restaurantId,
+    restaurantName: chosen.restaurant.name,
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    role: chosen.role,
+    membershipId: chosen.id,
+    employeeId: chosen.employeeId,
+  };
 }
 
 /** Defensa en profundidad: un contexto ya resuelto, ¿alcanza para esta capacidad? */

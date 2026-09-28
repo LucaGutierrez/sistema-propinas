@@ -169,6 +169,15 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 
 - **Neon production (2026-09-27):** migración `20260928000000_auth` validada primero en la branch `auth-test` (creada desde production con sus datos) y luego aplicada en production con guardas previas; `migrate status` al día, `migrate diff` vacío, huella de datos idéntica (detalle en `DATABASE.md` §10, "Estado en Neon — autenticación"). El OWNER existente tiene su credencial (`db:operator-password`, sin duplicar el usuario). **Login real verificado** desde la app local contra production: sesión creada, `/cuenta` y `/configuracion` (política v2 real, Salón 0,025) correctos, logout borra la sesión. Falta el despliegue (Vercel).
 
+### 6.7 Primer reparto real con la base (P0, 2026-09-28; sin migraciones)
+
+- **"Repartir propinas"** (`/reparto`): elegir la semana (esta o la pasada; se ajusta al día de inicio de la política y a la zona del restaurante), propina del período (total o por día), horas totales por persona (Enter avanza, pegar una columna de Excel, 0 = no trabajó, vacío = "Sin horas cargadas"), adelantos (registrar / anular con motivo), resultado **en vivo** con el valor de la hora por puesto y "¿Cómo se calculó?", revisión y **cierre**. Detalle de un reparto cerrado en `/reparto/[id]` (imprimible). `/semana` y `/semanas/[id]` redirigen ahí en modo base.
+- **Modelo existente, sin tablas nuevas:** `weekly_settlements` (período OPEN → CLOSED con `policy_snapshot` y `calc_version = provisional-1`), `daily_distributions` alcance `PERIOD` (DRAFT → CLOSED ligado al período) con `tip_entries` (la propina; el total va en una fila con nota "Total del período"), `period_hours`, `advances` + `advance_applications`, `weekly_payments` (PENDING) + evento CREATED y `audit_log`.
+- **Cálculo:** `buildPeriodPreview` (`lib/distribution/period-preview.ts`) sobre la fórmula existente `computeProvisionalDistribution` (sin cambios). La pantalla y el cierre usan la misma función con los mismos datos (`loadPeriodData`). Caso Library verificado: 5,398 puntos, $ 64.466,47 por punto, Ivan $ 40.613,88, suma exacta.
+- **Reglas de cierre:** propina > 0; toda persona activa con horas cargadas (0 vale); al menos una con horas; puesto de la configuración; en pesos enteros, propina sin centavos. Un reparto abierto a la vez. Cerrado = inmutable (servicio + triggers); corregir (anular y rehacer) queda para la siguiente etapa.
+- **Permisos:** ver repartos `OWNER/MANAGER/EDITOR/VIEWER`; cargar `OWNER/MANAGER/EDITOR`; cerrar `OWNER/MANAGER` (`CAN.viewPeriods/editPeriod/closePeriod`).
+- **Rendimiento:** sesión y acceso memoizados por pedido (`cache`), restaurante activo en una sola lectura, `loading.tsx`/`error.tsx`, middleware que manda al login sin renderizar si no hay cookie, rate limit fuera de `/get-session`, guardar horas/propina sin re-render, `apps/web/vercel.json` con `regions: ["gru1"]` (misma región que Neon). Consultas por pantalla (local): `/` 21 → 12, `/personal` 20 → 10, `/configuracion` 21 → 11.
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:

@@ -2,14 +2,13 @@ import { AlertTriangleIcon, LockIcon } from 'lucide-react';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { AccessGate } from '@/components/access/access-gate';
-import { SessionBar } from '@/components/auth/session-bar';
 import { DatabaseDistributionConfig } from '@/components/config/database-distribution-config';
 import { DemoDistributionConfig } from '@/components/config/demo-distribution-config';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { DistributionConfigView } from '@/lib/policy/view';
 import { AccessDenied, type AccessContext } from '@/server/access/access';
 import { requireAccess } from '@/server/access/request';
-import { CAN, ROLE_LABEL } from '@/server/access/roles';
+import { CAN } from '@/server/access/roles';
 import { databaseEnabled } from '@/server/context';
 import { getDb } from '@/server/db';
 import { loadDistributionConfig } from '@/server/policy/commands';
@@ -76,18 +75,8 @@ export default async function DistributionConfigRoute() {
     );
   }
 
-  const { access, view } = loaded;
-  return (
-    <>
-      <SessionBar
-        userName={access.userName}
-        email={access.userEmail}
-        role={ROLE_LABEL[access.role]}
-        restaurantName={access.restaurantName}
-      />
-      <DatabaseDistributionConfig view={view} />
-    </>
-  );
+  // La identidad (usuario, rol y restaurante) ya está en el encabezado de la app.
+  return <DatabaseDistributionConfig view={loaded.view} />;
 }
 
 function Problem({

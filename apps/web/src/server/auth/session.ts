@@ -4,6 +4,7 @@
  * nunca de datos que mande el navegador.
  */
 import { headers } from 'next/headers';
+import { cache } from 'react';
 import { getAuth, type Auth } from './auth';
 
 export interface SessionUser {
@@ -23,7 +24,11 @@ export async function sessionUserFrom(
   return { id, email, name };
 }
 
-/** Usuario con sesión en este pedido, o null si no hay sesión (o venció / fue revocada). */
-export async function getSessionUser(): Promise<SessionUser | null> {
+/**
+ * Usuario con sesión en este pedido, o null si no hay sesión (o venció / fue revocada).
+ * Memoizado POR PEDIDO (`cache` de React): el layout y la página comparten la misma consulta.
+ * No se guarda nada entre pedidos: cada pedido nuevo vuelve a validar la sesión en la base.
+ */
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   return sessionUserFrom(getAuth(), await headers());
-}
+});

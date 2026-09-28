@@ -8,6 +8,7 @@ import {
   InfoIcon,
   PlusIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { PositionBadge, toneOf } from '@/components/gutip/badges';
 import { FormulaCard } from '@/components/gutip/formula-card';
@@ -113,9 +114,15 @@ export function DistributionConfigView({
             calcularon.
           </p>
           <p>
-            Las horas, pozos y adelantos de cada semana se cargan en &quot;Semana actual&quot; y no
-            cambian la política. Los puntos, porcentajes, importes y sobres los calcula GUTIP.
-            {canEdit ? '' : ' Solo el Encargado puede cambiar la configuración.'}
+            La propina de cada semana (el &quot;pozo&quot;), las horas y los adelantos se cargan en{' '}
+            <Link
+              href={view.source === 'database' ? '/reparto' : '/semana'}
+              className="text-primary hover:underline"
+            >
+              {view.source === 'database' ? 'Repartir propinas' : 'Semana actual'}
+            </Link>{' '}
+            y no cambian esta configuración. Cuánto le toca a cada persona lo calcula GUTIP.
+            {canEdit ? '' : ' Solo el Dueño o el Encargado pueden cambiar la configuración.'}
           </p>
         </div>
       </div>

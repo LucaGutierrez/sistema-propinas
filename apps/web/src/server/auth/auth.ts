@@ -88,6 +88,9 @@ export function createAuth(db: PrismaClient, overrides: AuthOverrides = {}) {
       customRules: {
         '/sign-in/email': { window: 60, max: 5 },
         '/sign-up/email': { window: 60 * 60, max: SIGN_UP_PER_HOUR },
+        // Consultar la sesión no es un intento de acceso: sin contador (en base, cada llamada
+        // sumaba 4 consultas a Neon antes de responder).
+        '/get-session': false,
       },
     },
     advanced: {

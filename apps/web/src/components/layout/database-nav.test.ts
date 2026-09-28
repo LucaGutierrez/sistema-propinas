@@ -22,7 +22,12 @@ const DEMO_IMPORT =
 
 describe('modo base de datos: sin demo', () => {
   it('el menú solo tiene pantallas que leen la base', () => {
-    expect(DATABASE_VENUE_NAV.map((i) => i.href)).toEqual(['/', '/personal', '/configuracion']);
+    expect(DATABASE_VENUE_NAV.map((i) => i.href)).toEqual([
+      '/',
+      '/reparto',
+      '/personal',
+      '/configuracion',
+    ]);
     expect(DATABASE_ACCOUNT_NAV.map((i) => i.href)).toEqual(['/cuenta', '/crear-restaurante']);
   });
 
@@ -57,7 +62,7 @@ describe('modo base de datos: sin demo', () => {
         guarded: /if \(databaseEnabled\(\)\) (return|redirect)/.test(source),
       }).toEqual({ page, guarded: true });
     }
-    expect(read('app/semanas/[id]/page.tsx')).toMatch(/if \(databaseEnabled\(\)\) return/);
+    expect(read('app/semanas/[id]/page.tsx')).toMatch(/if \(databaseEnabled\(\)\) redirect/);
   });
 
   it('el layout decide el modo en el servidor y no se prerenderiza con la demo', () => {
