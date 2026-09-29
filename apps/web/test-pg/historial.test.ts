@@ -349,10 +349,15 @@ describe('historial: permisos', () => {
     const r = await restaurant();
     const settlementId = await period(r, '2025-08-06');
     const full = await getHistoryDetail(db, await viewer(r.owner), settlementId);
+    expect(full?.canVoid).toBe(true);
     for (const role of ['MANAGER', 'EDITOR', 'VIEWER'] as const) {
       const user = await member(r.id, role);
       const detail = await getHistoryDetail(db, await viewer(user), settlementId);
-      expect({ role, detail }).toEqual({ role, detail: full });
+      // Todos ven lo mismo; solo Dueño/Encargado pueden anular.
+      expect({ role, detail }).toEqual({
+        role,
+        detail: { ...full, canVoid: role === 'MANAGER', canRedo: false },
+      });
       expect((await listHistory(db, await viewer(user), all)).items).toHaveLength(1);
     }
   });

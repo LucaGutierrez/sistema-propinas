@@ -192,6 +192,12 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Fuente de verdad:** lo guardado al cerrar (`daily_distribution_items`, `weekly_settlements` con su `policy_snapshot`, `weekly_payments`/`weekly_payment_events`, `advances`/`advance_applications`). No usa el motor ni la política actual (lo verifica un test estático y uno que cambia la política después del cierre). Un reparto anulado se muestra con su motivo; si su reparto diario se desvinculó al anularlo, se lo encuentra por fechas.
 - **Permisos:** todos los roles leen; SELF solo lo suyo (sin totales ni otras personas). No hay ninguna acción: es solo lectura.
 
+### 6.10 Anular y rehacer un reparto cerrado (2026-09-28; sin migraciones)
+
+- **Anular** (`/historial/[id]`, Dueño/Encargado, motivo ≥ 10 y confirmación): una transacción que sigue DATABASE.md §6. Solo si ningún sobre está entregado (si lo hay, primero se revierte la entrega en Sobres); sobres PENDING/PREPARED → VOIDED con evento y motivo; el reparto diario se desvincula y queda VOIDED; sus descuentos de adelantos se revierten (`reverted_at`, no se borran) y esos adelantos vuelven a tener saldo; el período queda VOIDED (quién, cuándo, motivo) + `audit_log`. Nada del original se edita ni se borra.
+- **Rehacer** (reparto anulado, Dueño/Encargado): período nuevo de la misma semana con `revision + 1`, `supersedes_settlement_id` y la **misma versión de la política** que el anulado; propina, horas y cierre se cargan de nuevo; al cerrar, cada sobre nuevo apunta al anulado (`supersedes_payment_id`) y los adelantos se aplican con aplicaciones nuevas. Idempotente; no se puede con otro reparto abierto. "Empezar" esa semana también la rehace (y lo bloquea para el Editor).
+- **Concurrencia:** bloqueos en el orden de Sobres (período → sobres → adelantos por id): dos anulaciones a la vez dejan un solo evento; anular vs entregar nunca deja un período anulado con un sobre entregado (tests).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:

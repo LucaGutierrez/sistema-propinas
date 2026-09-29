@@ -19,17 +19,21 @@ import { getDb } from '@/server/db';
 import {
   addAdvanceInput,
   closePeriodInput,
+  redoPeriodInput,
   setHoursInput,
   setTipsInput,
   startPeriodInput,
   voidAdvanceInput,
+  voidPeriodInput,
 } from '@/server/periods/schemas';
 import {
   addPeriodAdvance,
   closePeriod,
+  redoPeriod,
   setPeriodHours,
   setPeriodTips,
   startPeriod,
+  voidPeriod,
   voidPeriodAdvance,
 } from '@/server/periods/service';
 import type { ServiceResult } from '@/server/policy/service';
@@ -147,6 +151,40 @@ export async function voidAdvanceAction(advanceId: string, reason: string): Prom
     refresh,
   );
   return result.ok ? { ok: true, value: null } : result;
+}
+
+const refreshAll = () => {
+  revalidatePath('/reparto', 'layout');
+  revalidatePath('/historial', 'layout');
+  revalidatePath('/sobres', 'layout');
+  revalidatePath('/');
+};
+
+/** Anular un reparto cerrado (motivo obligatorio). Solo Dueño/Encargado. */
+export async function voidPeriodAction(
+  settlementId: string,
+  reason: string,
+): Promise<ActionResult<string>> {
+  const result = await run(
+    CAN.voidPeriod,
+    voidPeriodInput,
+    { settlementId, reason },
+    (access, data) => voidPeriod(getDb(), access, data),
+    refreshAll,
+  );
+  return result.ok ? { ok: true, value: result.value.settlementId } : result;
+}
+
+/** Rehacer un reparto anulado: abre el reparto nuevo de la misma semana. Solo Dueño/Encargado. */
+export async function redoPeriodAction(settlementId: string): Promise<ActionResult<string>> {
+  const result = await run(
+    CAN.voidPeriod,
+    redoPeriodInput,
+    { settlementId },
+    (access, data) => redoPeriod(getDb(), access, data),
+    refreshAll,
+  );
+  return result.ok ? { ok: true, value: result.value.settlementId } : result;
 }
 
 export async function closePeriodAction(settlementId: string): Promise<ActionResult<string>> {

@@ -42,6 +42,11 @@ export const CAN = {
   editPeriod: ['OWNER', 'MANAGER', 'EDITOR'],
   /** Cerrar un reparto (queda congelado y genera los sobres). */
   closePeriod: ['OWNER', 'MANAGER'],
+  /**
+   * Anular un reparto cerrado (con motivo) y rehacerlo (reparto nuevo para la misma semana):
+   * mismas personas que pueden cerrar (DATABASE.md §6).
+   */
+  voidPeriod: ['OWNER', 'MANAGER'],
   /** Ver sobres: todo el local; SELF solo los suyos (ver `employeeScope`). */
   viewEnvelopes: ['OWNER', 'MANAGER', 'EDITOR', 'VIEWER', 'SELF'],
   /**

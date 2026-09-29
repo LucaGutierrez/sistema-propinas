@@ -112,6 +112,14 @@ export interface HistoryDetail {
   } | null;
   /** El detalle por persona está disponible (en un reparto anulado puede faltar). */
   detailAvailable: boolean;
+  /** Reparto anulado que este rehace (re-liquidación), y el que rehízo a este. */
+  supersedes: { settlementId: string } | null;
+  supersededBy: { settlementId: string; status: 'OPEN' | 'CLOSED' | 'VOIDED' } | null;
+  /** Sobres entregados: mientras haya alguno, el reparto no se puede anular. */
+  deliveredEnvelopes: number;
+  /** Según el rol (Dueño/Encargado) y el estado; el servidor lo vuelve a verificar al actuar. */
+  canVoid: boolean;
+  canRedo: boolean;
   people: HistoryPersonRow[];
   advances: HistoryAdvance[];
   events: HistoryEvent[];

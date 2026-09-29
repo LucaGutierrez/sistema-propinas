@@ -84,9 +84,22 @@ export const voidAdvanceInput = z.object({
 
 export const closePeriodInput = z.object({ settlementId: id });
 
+export const voidPeriodInput = z.object({
+  settlementId: id,
+  reason: z
+    .string({ error: 'Contá por qué se anula.' })
+    .trim()
+    .min(10, { error: 'El motivo es obligatorio (mínimo 10 caracteres).' })
+    .max(300, { error: 'El motivo puede tener hasta 300 caracteres.' }),
+});
+
+export const redoPeriodInput = z.object({ settlementId: id });
+
 export type StartPeriodInput = z.infer<typeof startPeriodInput>;
 export type SetTipsInput = z.infer<typeof setTipsInput>;
 export type SetHoursInput = z.infer<typeof setHoursInput>;
 export type AddAdvanceInput = z.infer<typeof addAdvanceInput>;
 export type VoidAdvanceInput = z.infer<typeof voidAdvanceInput>;
 export type ClosePeriodInput = z.infer<typeof closePeriodInput>;
+export type VoidPeriodInput = z.infer<typeof voidPeriodInput>;
+export type RedoPeriodInput = z.infer<typeof redoPeriodInput>;

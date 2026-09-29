@@ -36,6 +36,22 @@ describe('matriz de roles (ARCHITECTURE.md §9)', () => {
     ]);
   });
 
+  it('anular y rehacer un reparto: solo Dueño y Encargado (los mismos que cierran)', () => {
+    const table = ROLES.map((role) => [
+      role,
+      roleAllowed(role, CAN.voidPeriod),
+      roleAllowed(role, CAN.closePeriod),
+      roleAllowed(role, CAN.viewHistory),
+    ]);
+    expect(table).toEqual([
+      ['OWNER', true, true, true],
+      ['MANAGER', true, true, true],
+      ['EDITOR', false, false, true],
+      ['VIEWER', false, false, true],
+      ['SELF', false, false, true],
+    ]);
+  });
+
   it('una lista vacía no permite a nadie', () => {
     expect(ROLES.some((role) => roleAllowed(role, []))).toBe(false);
   });

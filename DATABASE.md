@@ -425,6 +425,8 @@ Una distribución diaria `CLOSED` es inmutable. Se refuerza en **tres capas**:
 
 **Anular liquidación semanal:** solo si ningún sobre está `DELIVERED`. Sobres → `VOIDED` (evento `VOIDED` con motivo); distribuciones → `settlement_id = NULL`.
 
+> **Implementado (2026-09-28, `server/periods/service.ts` → `voidPeriod` / `redoPeriod`).** En una transacción: `FOR UPDATE` sobre el período, luego sus sobres (y los adelantos por id, mismo orden que Sobres); si hay algún `DELIVERED` se rechaza; sobres `PENDING`/`PREPARED` → `VOIDED` + evento `VOIDED`; el reparto del período se libera (`settlement_id = NULL`) y pasa a `VOIDED`, sus `advance_applications` reciben `reverted_at` y los adelantos recalculan `applied_cents` y vuelven a `PENDING`; el período pasa a `VOIDED` (`voided_*`) y se registra `period.voided` en `audit_log`. Rehacer crea un `weekly_settlements` nuevo de la misma semana (`revision + 1`, `supersedes_settlement_id`, misma `policy_version_id`); al cerrarlo, cada sobre nuevo lleva `supersedes_payment_id` del sobre anulado de la misma persona (`previously_delivered_cents = 0`: no se anula con entregas vigentes). Solo `OWNER`/`MANAGER`.
+
 **Transiciones de sobre:** `PENDING → PREPARED → DELIVERED`; se permite `PREPARED → PENDING`. `delivered_at` lo fija el servidor (nunca el cliente). Cada transición inserta un `weekly_payment_events`.
 
 **Corrección tras una entrega (flujo completo, nada se modifica en silencio):**

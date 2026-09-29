@@ -24,6 +24,7 @@ import type {
   HistoryPersonRow,
 } from '@/lib/history/view';
 import { employeeScope, type AccessContext } from '../access/access';
+import { CAN, roleAllowed } from '../access/roles';
 import type { DbClient } from '../policy/repository';
 import { displayName } from '../staff/repository';
 
@@ -188,6 +189,8 @@ export async function getHistoryDetail(
       voidReason: true,
       policySnapshot: true,
       calcVersion: true,
+      supersedesSettlementId: true,
+      supersededBy: { select: { id: true, status: true } },
       totalCents: true,
       totalAdvancesCents: true,
       totalFinalCents: true,
@@ -412,6 +415,18 @@ export async function getHistoryDetail(
           participants: items.length > 0 ? items.length : payments.length,
         },
     detailAvailable: items.length > 0,
+    supersedes: settlement.supersedesSettlementId
+      ? { settlementId: settlement.supersedesSettlementId }
+      : null,
+    supersededBy: settlement.supersededBy
+      ? { settlementId: settlement.supersededBy.id, status: settlement.supersededBy.status }
+      : null,
+    deliveredEnvelopes: own ? 0 : payments.filter((p) => p.status === 'DELIVERED').length,
+    canVoid: settlement.status === 'CLOSED' && roleAllowed(access.role, CAN.voidPeriod),
+    canRedo:
+      settlement.status === 'VOIDED' &&
+      !settlement.supersededBy &&
+      roleAllowed(access.role, CAN.voidPeriod),
     people,
     advances: historyAdvances,
     events: timeline,

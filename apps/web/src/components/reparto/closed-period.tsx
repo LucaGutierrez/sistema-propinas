@@ -182,7 +182,12 @@ export function ClosedPeriod({
 
       <p className="mt-6 text-xs text-muted-foreground print:hidden">
         Un reparto cerrado no se puede modificar: así lo que se entrega siempre coincide con lo
-        registrado. Los sobres se preparan y entregan en Sobres, con estos mismos importes.
+        registrado. Los sobres se preparan y entregan en Sobres, con estos mismos importes.{' '}
+        <Link href={`/historial/${view.settlementId}`} className="text-primary hover:underline">
+          {view.status === 'VOIDED'
+            ? 'Ver la anulación y rehacerlo en Historial'
+            : '¿Hubo un error? Anularlo y rehacerlo desde Historial'}
+        </Link>
       </p>
     </div>
   );

@@ -7,6 +7,7 @@ import { formatDayMonth, formatShortDate } from '@/lib/dates';
 import { divRoundHalfUp, formatMoney, formatScaled } from '@/lib/decimal';
 import { EVENT_LABEL, STATUS_LABEL } from '@/lib/envelopes/view';
 import type { HistoryDetail, HistoryEvent } from '@/lib/history/view';
+import { PeriodActions } from './period-actions';
 
 const dateTime = new Intl.DateTimeFormat('es-AR', {
   dateStyle: 'short',
@@ -104,6 +105,20 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
           </div>
         </div>
       ) : null}
+
+      {detail.supersedes ? (
+        <p className="rounded-xl border bg-card p-4 text-sm">
+          Este reparto rehace uno anulado de la misma semana.{' '}
+          <Link
+            href={`/historial/${detail.supersedes.settlementId}`}
+            className="font-medium text-primary hover:underline"
+          >
+            Ver el reparto anulado
+          </Link>
+        </p>
+      ) : null}
+
+      {detail.ownOnly ? null : <PeriodActions detail={detail} />}
 
       {totals ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

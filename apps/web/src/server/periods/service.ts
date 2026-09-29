@@ -15,23 +15,25 @@
  * ordenan, y el cierre calcula con lo último que quedó guardado.
  */
 import type { PrismaClient } from '@prisma/client';
-import { addDays, periodStartOf, todayInTimeZone } from '@/lib/dates';
+import { addDays, formatShortDate, periodStartOf, todayInTimeZone } from '@/lib/dates';
 import { buildPeriodPreview } from '@/lib/distribution/period-preview';
 import { PERIOD_TOTAL_NOTE } from '@/lib/distribution/period-view';
 import { FORMULA_STATUS } from '@/lib/distribution/provisional-formula';
 import { formatScaled } from '@/lib/decimal';
 import { assertRole, type AccessContext } from '../access/access';
-import { CAN } from '../access/roles';
+import { CAN, roleAllowed } from '../access/roles';
 import { getPolicyVersion, type DbClient } from '../policy/repository';
 import { TX_OPTIONS, type ServiceResult } from '../policy/service';
-import { dateOf, loadPeriodData, type PeriodRow } from './repository';
+import { dateOf, isoOf, loadPeriodData, type PeriodRow } from './repository';
 import type {
   AddAdvanceInput,
   ClosePeriodInput,
+  RedoPeriodInput,
   SetHoursInput,
   SetTipsInput,
   StartPeriodInput,
   VoidAdvanceInput,
+  VoidPeriodInput,
 } from './schemas';
 
 /** Versión del cálculo que queda registrada en cada cierre. */
@@ -144,9 +146,27 @@ export async function startPeriod(
     const weekStart = periodStartOf(input.date ?? today, weekday);
     if (weekStart > currentStart)
       return fail('No se puede empezar un reparto de una semana futura.');
-    const weekEnd = addDays(weekStart, 6);
+    return createPeriodInTx(tx, access, weekStart, policy.id);
+  }, TX_OPTIONS);
+}
 
-    const taken = await tx.weeklySettlement.findFirst({
+/**
+ * Crea el período OPEN (y su reparto en borrador) de la semana que empieza en `weekStart`, con el
+ * restaurante ya bloqueado. Si esa semana tiene un reparto ANULADO que todavía nadie rehízo, el
+ * nuevo es su re-liquidación (DATABASE.md §6): `revision + 1`, `supersedes_settlement_id` y la
+ * MISMA versión de la política que el anulado (una semana reabierta conserva su versión).
+ * Rehacer es solo de Dueño/Encargado. Nunca quedan dos repartos vigentes superpuestos.
+ */
+async function createPeriodInTx(
+  tx: DbClient,
+  access: AccessContext,
+  weekStart: string,
+  currentPolicyVersionId: string,
+  redoOf?: string,
+): Promise<ServiceResult<{ settlementId: string; created: boolean }>> {
+  const weekEnd = addDays(weekStart, 6);
+  const [taken, overlapping, previous] = await Promise.all([
+    tx.weeklySettlement.findFirst({
       where: {
         restaurantId: access.restaurantId,
         status: { not: 'VOIDED' },
@@ -154,8 +174,8 @@ export async function startPeriod(
         weekEnd: { gte: dateOf(weekStart) },
       },
       select: { id: true },
-    });
-    const overlapping = await tx.dailyDistribution.findFirst({
+    }),
+    tx.dailyDistribution.findFirst({
       where: {
         restaurantId: access.restaurantId,
         status: { not: 'VOIDED' },
@@ -163,31 +183,255 @@ export async function startPeriod(
         dateTo: { gte: dateOf(weekStart) },
       },
       select: { id: true },
+    }),
+    tx.weeklySettlement.findFirst({
+      where: { restaurantId: access.restaurantId, weekStart: dateOf(weekStart) },
+      orderBy: { revision: 'desc' },
+      select: {
+        id: true,
+        revision: true,
+        status: true,
+        policyVersionId: true,
+        supersededBy: { select: { id: true } },
+      },
+    }),
+  ]);
+  if (taken || overlapping) {
+    return fail('Esa semana ya tiene un reparto cerrado (o se superpone con uno).');
+  }
+  const supersedes =
+    previous && previous.status === 'VOIDED' && !previous.supersededBy ? previous : null;
+  if (redoOf && supersedes?.id !== redoOf) {
+    return fail('Ese reparto ya no es el último de su semana: no se puede rehacer.');
+  }
+  if (supersedes && !roleAllowed(access.role, CAN.voidPeriod)) {
+    return fail(
+      'Esa semana tiene un reparto anulado: solo el Dueño o el Encargado pueden rehacerlo.',
+    );
+  }
+
+  const settlement = await tx.weeklySettlement.create({
+    data: {
+      restaurantId: access.restaurantId,
+      weekStart: dateOf(weekStart),
+      weekEnd: dateOf(weekEnd),
+      revision: (previous?.revision ?? 0) + 1,
+      supersedesSettlementId: supersedes?.id ?? null,
+      policyVersionId: supersedes?.policyVersionId ?? currentPolicyVersionId,
+      createdById: access.userId,
+    },
+    select: { id: true },
+  });
+  await tx.dailyDistribution.create({
+    data: {
+      restaurantId: access.restaurantId,
+      scope: 'PERIOD',
+      dateFrom: dateOf(weekStart),
+      dateTo: dateOf(weekEnd),
+      createdById: access.userId,
+    },
+  });
+  if (supersedes) {
+    await tx.auditLog.create({
+      data: {
+        restaurantId: access.restaurantId,
+        userId: access.userId,
+        action: 'period.redone',
+        entity: 'weekly_settlements',
+        entityId: settlement.id,
+        payload: { supersedes: supersedes.id, weekStart },
+      },
     });
-    if (taken || overlapping) {
-      return fail('Esa semana ya tiene un reparto cerrado (o se superpone con uno).');
+  }
+  return { ok: true, value: { settlementId: settlement.id, created: true } };
+}
+
+// ─────────────────────────── Anular y rehacer ───────────────────────────
+
+/**
+ * Anula un reparto CERRADO (DATABASE.md §6), en UNA transacción y sin borrar nada:
+ *   1. solo si ningún sobre está ENTREGADO (primero se revierten esas entregas, con motivo);
+ *   2. sobres PENDING/PREPARED → VOIDED, con su evento VOIDED y el motivo;
+ *   3. el reparto diario se desvincula del período y queda VOIDED; sus descuentos de adelantos se
+ *      revierten (`reverted_at`) y esos adelantos vuelven a tener saldo: el reparto nuevo los
+ *      aplica con aplicaciones NUEVAS (las viejas quedan en la historia);
+ *   4. el período queda VOIDED con quién, cuándo y por qué, y una fila en audit_log.
+ * Ítems, importes, horas, snapshot y bitácoras del original no se tocan (y la base los congela).
+ * Bloqueos en el orden de Sobres: período → sobres (y después los adelantos por id).
+ */
+export async function voidPeriod(
+  db: PrismaClient,
+  access: AccessContext,
+  input: VoidPeriodInput,
+): Promise<ServiceResult<{ settlementId: string }>> {
+  assertRole(access, CAN.voidPeriod);
+  return db.$transaction(async (tx) => {
+    const period = await lockPeriod(tx, access.restaurantId, input.settlementId);
+    if (!period) return fail(NOT_FOUND);
+    if (period.status === 'VOIDED') return fail('Este reparto ya fue anulado.');
+    if (period.status !== 'CLOSED') return fail('Solo se puede anular un reparto cerrado.');
+
+    const payments = await tx.$queryRaw<{ id: string; status: string; net_cents: bigint }[]>`
+      SELECT id::text AS id, status::text AS status, net_cents
+      FROM weekly_payments
+      WHERE restaurant_id = ${access.restaurantId}::uuid AND settlement_id = ${period.id}::uuid
+      ORDER BY id
+      FOR UPDATE`;
+    const delivered = payments.filter((p) => p.status === 'DELIVERED').length;
+    if (delivered > 0) {
+      return fail(
+        `No se puede anular: ${delivered === 1 ? 'hay 1 sobre entregado' : `hay ${delivered} sobres entregados`}. ` +
+          'Primero revertí esas entregas en Sobres (con motivo) y después anulá el reparto.',
+      );
     }
 
-    const settlement = await tx.weeklySettlement.create({
-      data: {
-        restaurantId: access.restaurantId,
-        weekStart: dateOf(weekStart),
-        weekEnd: dateOf(weekEnd),
-        policyVersionId: policy.id,
-        createdById: access.userId,
-      },
+    const now = new Date();
+    // 1) Sobres → VOIDED (con el motivo en su bitácora).
+    const open = payments.filter((p) => p.status === 'PENDING' || p.status === 'PREPARED');
+    if (open.length > 0) {
+      await tx.weeklyPayment.updateMany({
+        where: { id: { in: open.map((p) => p.id) }, status: { in: ['PENDING', 'PREPARED'] } },
+        data: { status: 'VOIDED' },
+      });
+      await tx.weeklyPaymentEvent.createMany({
+        data: open.map((p) => ({
+          restaurantId: access.restaurantId,
+          paymentId: p.id,
+          eventType: 'VOIDED' as const,
+          fromStatus: p.status as 'PENDING' | 'PREPARED',
+          toStatus: 'VOIDED' as const,
+          amountCents: p.net_cents,
+          performedById: access.userId,
+          reason: input.reason,
+          occurredAt: now,
+        })),
+      });
+    }
+
+    // 2) Reparto diario: se libera del período, se anula y se revierten sus adelantos.
+    const distribution = await tx.dailyDistribution.findFirst({
+      where: { restaurantId: access.restaurantId, settlementId: period.id, status: 'CLOSED' },
       select: { id: true },
     });
-    await tx.dailyDistribution.create({
+    if (distribution) {
+      await tx.dailyDistribution.update({
+        where: { id: distribution.id },
+        data: { settlementId: null },
+      });
+      await tx.dailyDistribution.update({
+        where: { id: distribution.id },
+        data: {
+          status: 'VOIDED',
+          voidedAt: now,
+          voidedById: access.userId,
+          voidReason: input.reason,
+        },
+      });
+      const applications = await tx.advanceApplication.findMany({
+        where: { item: { dailyDistributionId: distribution.id }, revertedAt: null },
+        select: { id: true, advanceId: true, amountCents: true },
+      });
+      if (applications.length > 0) {
+        const byAdvance = new Map<string, bigint>();
+        for (const a of applications) {
+          byAdvance.set(a.advanceId, (byAdvance.get(a.advanceId) ?? 0n) + a.amountCents);
+        }
+        const ids = [...byAdvance.keys()].sort();
+        const locked = await tx.$queryRaw<{ id: string; applied_cents: bigint }[]>`
+          SELECT id::text AS id, applied_cents FROM advances
+          WHERE id = ANY(${ids}::uuid[]) AND restaurant_id = ${access.restaurantId}::uuid
+          ORDER BY id
+          FOR UPDATE`;
+        await tx.advanceApplication.updateMany({
+          where: { id: { in: applications.map((a) => a.id) }, revertedAt: null },
+          data: { revertedAt: now },
+        });
+        for (const advance of locked) {
+          const applied = advance.applied_cents - (byAdvance.get(advance.id) ?? 0n);
+          await tx.advance.update({
+            where: { id: advance.id },
+            // Con saldo otra vez: PENDING (lo aplica el reparto nuevo, con una aplicación nueva).
+            data: { appliedCents: applied, status: 'PENDING' },
+          });
+        }
+      }
+    }
+
+    // 3) Período anulado (la base solo deja completar los datos de la anulación).
+    await tx.weeklySettlement.update({
+      where: { id: period.id },
       data: {
-        restaurantId: access.restaurantId,
-        scope: 'PERIOD',
-        dateFrom: dateOf(weekStart),
-        dateTo: dateOf(weekEnd),
-        createdById: access.userId,
+        status: 'VOIDED',
+        voidedAt: now,
+        voidedById: access.userId,
+        voidReason: input.reason,
       },
     });
-    return { ok: true, value: { settlementId: settlement.id, created: true } };
+    await tx.auditLog.create({
+      data: {
+        restaurantId: access.restaurantId,
+        userId: access.userId,
+        action: 'period.voided',
+        entity: 'weekly_settlements',
+        entityId: period.id,
+        payload: {
+          reason: input.reason,
+          weekStart: period.weekStart,
+          voidedPayments: open.length,
+        },
+      },
+    });
+    return { ok: true, value: { settlementId: period.id } };
+  }, TX_OPTIONS);
+}
+
+/**
+ * Rehacer un reparto ANULADO: crea el período nuevo de la misma semana (revision + 1,
+ * `supersedes_settlement_id`, misma versión de la política). No copia nada calculado: propina,
+ * horas y cierre se cargan de nuevo. Idempotente: si ya se rehízo, devuelve el reparto nuevo.
+ */
+export async function redoPeriod(
+  db: PrismaClient,
+  access: AccessContext,
+  input: RedoPeriodInput,
+): Promise<ServiceResult<{ settlementId: string; created: boolean }>> {
+  assertRole(access, CAN.voidPeriod);
+  return db.$transaction(async (tx) => {
+    // Mismo orden que "Empezar": primero el restaurante (dos pedidos a la vez se ordenan).
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id::text AS id FROM restaurants WHERE id = ${access.restaurantId}::uuid FOR UPDATE`;
+    if (locked.length === 0) return fail('El restaurante no existe.');
+    const original = await tx.weeklySettlement.findFirst({
+      where: { id: input.settlementId, restaurantId: access.restaurantId },
+      select: {
+        id: true,
+        status: true,
+        weekStart: true,
+        policyVersionId: true,
+        supersededBy: { select: { id: true } },
+      },
+    });
+    if (!original) return fail(NOT_FOUND);
+    if (original.status !== 'VOIDED') return fail('Solo se puede rehacer un reparto anulado.');
+    if (original.supersededBy) {
+      return { ok: true, value: { settlementId: original.supersededBy.id, created: false } };
+    }
+    const open = await tx.weeklySettlement.findFirst({
+      where: { restaurantId: access.restaurantId, status: 'OPEN' },
+      select: { weekStart: true },
+    });
+    if (open) {
+      return fail(
+        `Ya hay un reparto abierto (semana del ${formatShortDate(isoOf(open.weekStart))}): cerralo antes de rehacer este.`,
+      );
+    }
+    return createPeriodInTx(
+      tx,
+      access,
+      isoOf(original.weekStart),
+      original.policyVersionId,
+      original.id,
+    );
   }, TX_OPTIONS);
 }
 
@@ -480,9 +724,18 @@ export async function closePeriod(
       },
     });
 
-    // 4) Un sobre por persona que trabajó, con su evento de creación.
+    // 4) Un sobre por persona que trabajó, con su evento de creación. Si este reparto rehace uno
+    //    anulado, cada sobre nuevo apunta al sobre anulado de la misma persona (DATABASE.md §6).
+    const superseded = await tx.weeklySettlement.findUnique({
+      where: { id: period.id },
+      select: { supersedes: { select: { payments: { select: { id: true, employeeId: true } } } } },
+    });
+    const previousPayment = new Map(
+      (superseded?.supersedes?.payments ?? []).map((p) => [p.employeeId, p.id]),
+    );
     const payments = await tx.weeklyPayment.createManyAndReturn({
       data: worked.map((row) => ({
+        supersedesPaymentId: previousPayment.get(row.employeeId) ?? null,
         restaurantId: access.restaurantId,
         settlementId: period.id,
         employeeId: row.employeeId,
