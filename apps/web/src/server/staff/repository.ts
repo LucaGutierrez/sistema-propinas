@@ -5,8 +5,14 @@
  * (con `last_name` vacío) y se muestra uniendo ambos, así un empleado cargado con nombre y
  * apellido por separado también se ve bien.
  */
+import { participationMethodOf } from '@/lib/policy/db-mapping';
 import type { StaffView } from '@/lib/staff/view';
 import { getCurrentPolicy, getRestaurant, type DbClient } from '../policy/repository';
+
+/** Puntos individuales de la base (NUMERIC(6,2), sin floats) → "1,20". */
+export function pointsText(value: { toFixed(n: number): string }): string {
+  return value.toFixed(2).replace('.', ',');
+}
 
 export function displayName(employee: { firstName: string; lastName: string }): string {
   return [employee.firstName, employee.lastName]
@@ -20,13 +26,21 @@ export async function listEmployees(db: DbClient, restaurantId: string) {
   const rows = await db.employee.findMany({
     where: { restaurantId, archivedAt: null },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    select: { id: true, firstName: true, lastName: true, defaultPositionId: true, active: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      defaultPositionId: true,
+      active: true,
+      individualPoints: true,
+    },
   });
   return rows.map((e) => ({
     id: e.id,
     name: displayName(e),
     positionId: e.defaultPositionId ?? '',
     active: e.active,
+    individualPoints: pointsText(e.individualPoints),
   }));
 }
 
@@ -50,5 +64,7 @@ export async function getStaffView(
     positions: policy.positions.map((p) => ({ id: p.positionId, name: p.name, factor: p.factor })),
     members,
     canEdit: access.canEdit,
+    method: participationMethodOf(policy.columns.portionMode),
+    portionDisplay: restaurant.portionDisplay,
   };
 }

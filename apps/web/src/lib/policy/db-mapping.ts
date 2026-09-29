@@ -17,6 +17,7 @@ import type {
 } from '@prisma/client';
 import { formatScaled, parseDecimal } from '@/lib/decimal';
 import type { DistributionConfig } from '@/lib/demo-store/config';
+import type { ParticipationMethod } from '@/lib/distribution/participation';
 
 /** Columnas de parámetros de una versión (sin número, autor, fecha ni puestos). */
 export interface PolicyColumns {
@@ -44,7 +45,11 @@ const HOURS_BASIS: Pairs<'hoursBasis', HoursBasis> = [['TOTAL_PERIODO', 'PERIOD_
 const HOURS_ENTRY: Pairs<'hoursEntry', HoursEntry> = [['TOTAL_AL_CERRAR', 'PERIOD_TOTAL_AT_CLOSE']];
 const SOURCES: Pairs<'sources', PotSources> = [['UNA_FUENTE', 'SINGLE_DAILY_AMOUNT']];
 const GROUPS: Pairs<'groups', PoolStructure> = [['SIN_GRUPOS', 'SINGLE_POOL']];
-const WEIGHTS: Pairs<'weights', PortionMode> = [['POR_PUESTO', 'BY_POSITION']];
+const WEIGHTS: Pairs<'weights', PortionMode> = [
+  ['POR_PUESTO', 'BY_POSITION'],
+  ['POR_PUNTOS', 'BY_POINTS'],
+  ['PUESTO_POR_PUNTOS', 'BY_POSITION_TIMES_POINTS'],
+];
 const ROUNDING: Pairs<'rounding', RoundingUnit> = [
   ['CENTAVO', 'CENT'],
   ['PESO', 'PESO'],
@@ -87,7 +92,7 @@ export function valuesToColumns(
     hoursEntry: toDb(HOURS_ENTRY, values.hoursEntry, 'Carga de horas'),
     potSources: toDb(SOURCES, values.sources, 'Fuentes del pozo'),
     poolStructure: toDb(GROUPS, values.groups, 'Grupos'),
-    portionMode: toDb(WEIGHTS, values.weights, 'Porción'),
+    portionMode: toDb(WEIGHTS, values.weights, 'Método de participación'),
     roundingUnit: toDb(ROUNDING, values.rounding, 'Redondeo'),
     advanceDeduction: toDb(ADVANCES, values.advances, 'Adelantos'),
     envelopeHandlers: toDb(ENVELOPES, values.envelopes, 'Sobres'),
@@ -102,7 +107,7 @@ export function columnsToValues(columns: PolicyColumns): DistributionConfig {
     hoursEntry: fromDb(HOURS_ENTRY, columns.hoursEntry, 'Carga de horas'),
     sources: fromDb(SOURCES, columns.potSources, 'Fuentes del pozo'),
     groups: fromDb(GROUPS, columns.poolStructure, 'Grupos'),
-    weights: fromDb(WEIGHTS, columns.portionMode, 'Porción'),
+    weights: fromDb(WEIGHTS, columns.portionMode, 'Método de participación'),
     rounding: fromDb(ROUNDING, columns.roundingUnit, 'Redondeo'),
     advances: fromDb(ADVANCES, columns.advanceDeduction, 'Adelantos'),
     envelopes: fromDb(ENVELOPES, columns.envelopeHandlers, 'Sobres'),
@@ -127,4 +132,9 @@ export function portionFromDb(portion: string): string {
   if (scaled === null) throw new Error(`Porción inválida en la base: ${portion}`);
   const text = formatScaled(scaled, PORTION_DB_SCALE, PORTION_DB_SCALE);
   return text.replace(/0+$/, '').replace(/,$/, '');
+}
+
+/** Método de participación de una versión (los valores del enum de la base son los del motor). */
+export function participationMethodOf(portionMode: PortionMode): ParticipationMethod {
+  return portionMode;
 }

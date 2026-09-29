@@ -30,6 +30,8 @@ export function DemoDistributionConfig() {
       current: { ...current, closedPeriods: closedBy(current.number) },
       versions,
       peopleByPosition,
+      // La demo muestra las porciones como decimal (la preferencia es de la base).
+      portionDisplay: 'DECIMAL',
       canEdit: perms.configureDistribution,
     };
   }, [venue, perms.configureDistribution]);

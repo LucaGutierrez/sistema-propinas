@@ -7,7 +7,9 @@
  * (vista previa en vivo) y el cierre (dentro de su transacción): los dos calculan con lo mismo.
  */
 import { divRoundHalfUp } from '@/lib/decimal';
+import type { ParticipationMethod } from '@/lib/distribution/participation';
 import type { PreviewPerson } from '@/lib/distribution/period-preview';
+import { participationMethodOf } from '@/lib/policy/db-mapping';
 import {
   hoursText,
   PERIOD_TOTAL_NOTE,
@@ -19,7 +21,7 @@ import {
 } from '@/lib/distribution/period-view';
 import { roleAllowed, CAN, type Role } from '../access/roles';
 import { getPolicyVersion, type DbClient, type PolicyVersionRecord } from '../policy/repository';
-import { displayName } from '../staff/repository';
+import { displayName, pointsText } from '../staff/repository';
 
 /** Fecha de calendario de la base (`@db.Date`, medianoche UTC) ↔ "2026-09-21". */
 export const isoOf = (date: Date): string => date.toISOString().slice(0, 10);
@@ -51,6 +53,8 @@ export interface PeriodData {
   /** Adelantos pendientes (con saldo) de fecha ≤ fin del período, del más viejo al más nuevo. */
   advances: PendingAdvance[];
   unitCents: bigint;
+  /** Método de participación de la versión del período. */
+  method: ParticipationMethod;
 }
 
 export function unitCentsOf(policy: PolicyVersionRecord): bigint {
@@ -68,7 +72,14 @@ export async function loadPeriodData(
     db.employee.findMany({
       where: { restaurantId, archivedAt: null },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, firstName: true, lastName: true, defaultPositionId: true, active: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        defaultPositionId: true,
+        active: true,
+        individualPoints: true,
+      },
     }),
     db.periodHours.findMany({
       where: { restaurantId, settlementId: period.id },
@@ -136,6 +147,8 @@ export async function loadPeriodData(
         positionId: position?.positionId ?? null,
         positionName: position?.name ?? null,
         factor: position?.factor ?? null,
+        // Los puntos ACTUALES de la persona: el cierre congela en el ítem los que usó.
+        individualPoints: pointsText(e.individualPoints),
         hours: hoursByEmployee.get(e.id) ?? null,
         advanceCents: advanceByEmployee.get(e.id) ?? 0n,
         active: e.active,
@@ -171,6 +184,7 @@ export async function loadPeriodData(
     people: indexed.map((i) => i.person),
     advances: pending,
     unitCents: unitCentsOf(policy),
+    method: participationMethodOf(policy.columns.portionMode),
   };
 }
 
@@ -212,6 +226,10 @@ export async function getOpenPeriodView(
   if (!period) return null;
   const data = await loadPeriodData(db, access.restaurantId, period);
   if (!data) return null;
+  const restaurant = await db.restaurant.findUnique({
+    where: { id: access.restaurantId },
+    select: { portionDisplay: true },
+  });
   const names = new Map(data.people.map((p) => [p.employeeId, p.name]));
   const advances: PeriodAdvanceView[] = data.advances.map((a) => ({
     id: a.id,
@@ -230,13 +248,19 @@ export async function getOpenPeriodView(
     weekEnd: period.weekEnd,
     policyVersion: data.policy.number,
     roundingUnit: data.policy.columns.roundingUnit,
+    method: data.method,
+    portionDisplay: restaurant?.portionDisplay ?? 'DECIMAL',
     unitCents: data.unitCents.toString(),
     tips: {
       mode: data.tips.mode,
       totalCents: data.tips.totalCents.toString(),
       days: data.tips.days.map((d) => ({ date: d.date, amountCents: d.amountCents.toString() })),
     },
-    people: data.people.map((p) => ({ ...p, advanceCents: p.advanceCents.toString() })),
+    people: data.people.map((p) => ({
+      ...p,
+      individualPoints: p.individualPoints ?? null,
+      advanceCents: p.advanceCents.toString(),
+    })),
     advances,
     canEdit: roleAllowed(access.role, CAN.editPeriod),
     canClose: roleAllowed(access.role, CAN.closePeriod),
@@ -339,7 +363,8 @@ export async function getClosedPeriodView(
       status: true,
       closedAt: true,
       closedBy: { select: { name: true } },
-      policyVersion: { select: { number: true, roundingUnit: true } },
+      policyVersion: { select: { number: true, roundingUnit: true, portionMode: true } },
+      restaurant: { select: { portionDisplay: true } },
       totalCents: true,
       totalAdvancesCents: true,
       totalFinalCents: true,
@@ -362,6 +387,7 @@ export async function getClosedPeriodView(
             employeeNameSnapshot: true,
             positionNameSnapshot: true,
             portionSnapshot: true,
+            individualPointsSnapshot: true,
             hours: true,
             points: true,
             percentage: true,
@@ -399,10 +425,13 @@ export async function getClosedPeriodView(
     closedByName: settlement.closedBy?.name ?? null,
     policyVersion: settlement.policyVersion.number,
     roundingUnit: settlement.policyVersion.roundingUnit,
+    method: participationMethodOf(settlement.policyVersion.portionMode),
+    portionDisplay: settlement.restaurant.portionDisplay,
     totalCents: (settlement.totalCents ?? 0n).toString(),
     totalAdvancesCents: (settlement.totalAdvancesCents ?? 0n).toString(),
     totalFinalCents: (settlement.totalFinalCents ?? 0n).toString(),
     totalPointsE6: distribution ? toE(distribution.totalPoints, 6) : '0',
+    totalWeightE8: distribution ? toE(distribution.totalPoints, 8) : '0',
     totalHours: totalHoursE2.toString(),
     tipsMode: entries.some((e) => e.note !== PERIOD_TOTAL_NOTE) ? 'daily' : 'total',
     tipsByDay: entries.map((e) => ({
@@ -414,7 +443,11 @@ export async function getClosedPeriodView(
       name: i.employeeNameSnapshot,
       positionName: i.positionNameSnapshot,
       hours: hoursText(i.hours.toFixed(2)),
-      factor: i.portionSnapshot.toFixed(10).replace(/0+$/, '').replace(/\.$/, '').replace('.', ','),
+      factor: i.portionSnapshot
+        ? i.portionSnapshot.toFixed(10).replace(/0+$/, '').replace(/\.$/, '').replace('.', ',')
+        : null,
+      individualPoints: i.individualPointsSnapshot ? pointsText(i.individualPointsSnapshot) : null,
+      weightE8: toE(i.points, 8),
       pointsE6: toE(i.points, 6),
       // percentage es una fracción 0..1 con 6 decimales → centésimas de punto porcentual.
       percentE2: divRoundHalfUp(BigInt(toE(i.percentage, 6)), 100n).toString(),

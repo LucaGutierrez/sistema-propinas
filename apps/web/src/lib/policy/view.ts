@@ -4,6 +4,7 @@
  */
 import type { ParamKey } from '@/lib/demo-store/config';
 import type { PolicyVersion } from '@/lib/demo-store/policy';
+import type { PortionDisplay } from './portion-format';
 
 export interface PolicyVersionView extends PolicyVersion {
   /** Períodos cerrados que se calcularon con esta versión. */
@@ -19,6 +20,8 @@ export interface DistributionConfigView {
   versions: PolicyVersionView[];
   /** Personas activas por puesto (id del puesto → cantidad). */
   peopleByPosition: Record<string, number>;
+  /** Cómo se muestran (y escriben) las porciones. Preferencia del restaurante, no de la política. */
+  portionDisplay: PortionDisplay;
   canEdit: boolean;
 }
 
@@ -27,4 +30,6 @@ export interface DistributionConfigActions {
   setValue(key: ParamKey, value: string): Promise<string | null>;
   addPosition(name: string, factor: string): Promise<string | null>;
   setPortion(positionId: string, factor: string): Promise<string | null>;
+  /** Cambia cómo se muestran las porciones (no crea versión). Sin esta acción no se ofrece. */
+  setPortionDisplay?(display: PortionDisplay): Promise<string | null>;
 }

@@ -6,7 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDayMonth, formatShortDate } from '@/lib/dates';
 import { divRoundHalfUp, formatMoney, formatScaled } from '@/lib/decimal';
 import { EVENT_LABEL, STATUS_LABEL } from '@/lib/envelopes/view';
-import type { HistoryDetail, HistoryEvent } from '@/lib/history/view';
+import { formatWeight, METHOD_LABEL, weightInputsText } from '@/lib/distribution/period-view';
+import type { HistoryDetail, HistoryEvent, HistoryPersonRow } from '@/lib/history/view';
+import type { PortionDisplay } from '@/lib/policy/portion-format';
 import { PeriodActions } from './period-actions';
 
 const dateTime = new Intl.DateTimeFormat('es-AR', {
@@ -33,12 +35,17 @@ function eventText(event: HistoryEvent): string {
   return `${label}${who}${amount} — por ${event.by} el ${when(event.at)}`;
 }
 
+/** "45 h × 0,022 de porción × 1,20 puntos = 1,188 de ponderado · 12,5 %" (todo del snapshot). */
+function weightLine(p: HistoryPersonRow, display: PortionDisplay): string {
+  return `${weightInputsText(p, display)} = ${formatWeight(BigInt(p.weightE8))} de ponderado · ${formatScaled(BigInt(p.percentE2), 2, 2)} %`;
+}
+
 /** Detalle histórico (solo lectura): exactamente lo que quedó guardado al cerrar. */
 export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
   const totals = detail.totals;
   const pointValue =
-    totals && BigInt(totals.pointsE6) > 0n
-      ? divRoundHalfUp(BigInt(totals.tipsCents) * 1_000_000n, BigInt(totals.pointsE6))
+    totals && BigInt(totals.weightE8) > 0n
+      ? divRoundHalfUp(BigInt(totals.tipsCents) * 100_000_000n, BigInt(totals.weightE8))
       : null;
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -126,8 +133,8 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
           <Tile label="Adelantos descontados" value={money(totals.advancesCents)} />
           <Tile label="Personas" value={String(totals.participants)} />
           <Tile
-            label="Puntos · valor del punto"
-            value={`${formatScaled(BigInt(totals.pointsE6), 6, 3)} · ${
+            label="Ponderado · valor de 1"
+            value={`${formatWeight(BigInt(totals.weightE8))} · ${
               pointValue === null ? '—' : formatMoney(pointValue)
             }`}
           />
@@ -138,10 +145,16 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
       <Card className="gap-0 py-0">
         <CardHeader className="py-4">
           <CardTitle>{detail.ownOnly ? 'Lo que te correspondió' : 'Detalle por persona'}</CardTitle>
+          {detail.detailAvailable ? (
+            <p className="text-sm text-muted-foreground">
+              Método de participación: {METHOD_LABEL[detail.method]}. Los valores son los que se
+              usaron al cerrar.
+            </p>
+          ) : null}
           {detail.detailAvailable ? null : (
             <p className="text-sm text-muted-foreground">
-              El detalle de horas y puntos de este reparto anulado no está disponible; se muestran
-              los importes de los sobres.
+              El detalle de horas y ponderado de este reparto anulado no está disponible; se
+              muestran los importes de los sobres.
             </p>
           )}
         </CardHeader>
@@ -158,9 +171,7 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
                     <p className="truncate font-medium">{p.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {p.positionName}
-                      {detail.detailAvailable
-                        ? ` · ${p.hours} h × ${p.factor} = ${formatScaled(BigInt(p.pointsE6), 6, 3)} puntos · ${formatScaled(BigInt(p.percentE2), 2, 2)} %`
-                        : ''}
+                      {detail.detailAvailable ? ` · ${weightLine(p, detail.portionDisplay)}` : ''}
                     </p>
                   </div>
                   <div className="text-right">

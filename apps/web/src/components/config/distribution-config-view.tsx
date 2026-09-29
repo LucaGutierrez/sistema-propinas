@@ -34,6 +34,15 @@ import {
   type PolicyOrigin,
   type PolicyVersion,
 } from '@/lib/demo-store/policy';
+import {
+  formatPortion,
+  parsePortionInput,
+  PORTION_DISPLAY_LABEL,
+  PORTION_DISPLAYS,
+  portionInputError,
+  portionPlaceholder,
+  type PortionDisplay,
+} from '@/lib/policy/portion-format';
 import type {
   DistributionConfigActions,
   DistributionConfigView as View,
@@ -134,7 +143,7 @@ export function DistributionConfigView({
         >
           <p className="flex items-center gap-2 font-medium text-destructive">
             <AlertTriangleIcon className="size-4" />
-            Puntos por definir: se puede guardar y ver la vista previa, pero no cerrar semanas.
+            Pendientes por definir: se puede guardar y ver la vista previa, pero no cerrar semanas.
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-6 text-muted-foreground">
             {gaps.map((gap) => (
@@ -155,6 +164,7 @@ export function DistributionConfigView({
             canEdit={canEdit}
             actions={actions}
             showReference={view.source === 'demo'}
+            demo={view.source === 'demo'}
           />
         ))}
       </div>
@@ -211,12 +221,15 @@ function ParamCard({
   canEdit,
   actions,
   showReference,
+  demo,
 }: {
   version: PolicyVersion;
   param: ParamDefinition;
   canEdit: boolean;
   actions: DistributionConfigActions;
   showReference: boolean;
+  /** En la demo, las opciones que necesitan la base de datos no se pueden elegir. */
+  demo: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -236,14 +249,15 @@ function ParamCard({
           <legend className="sr-only">{param.label}</legend>
           {param.options.map((option) => {
             const selected = option.value === current;
+            const available = option.supported && !(demo && option.databaseOnly);
             return (
               <label
                 key={option.value}
                 className={cn(
                   'flex items-start gap-3 rounded-lg border p-3 text-sm transition-colors',
                   selected && 'border-primary/50 bg-primary/5',
-                  !option.supported && 'opacity-60',
-                  canEdit && option.supported && !selected && 'cursor-pointer hover:bg-muted/50',
+                  !available && 'opacity-60',
+                  canEdit && available && !selected && 'cursor-pointer hover:bg-muted/50',
                 )}
               >
                 <input
@@ -251,7 +265,7 @@ function ParamCard({
                   name={param.key}
                   className="mt-0.5 size-4 accent-[var(--primary)]"
                   checked={selected}
-                  disabled={!option.supported}
+                  disabled={!available}
                   onChange={() =>
                     startTransition(async () => {
                       setError(await actions.setValue(param.key, option.value));
@@ -264,6 +278,10 @@ function ParamCard({
                     {!option.supported ? (
                       <Badge variant="outline" className="text-muted-foreground">
                         Próximamente
+                      </Badge>
+                    ) : !available ? (
+                      <Badge variant="outline" className="text-muted-foreground">
+                        Solo con la base de datos
                       </Badge>
                     ) : null}
                   </span>
@@ -303,6 +321,7 @@ function PositionsEditor({
   actions: DistributionConfigActions;
 }) {
   const version = view.current;
+  const display = view.portionDisplay;
   const [name, setName] = useState('');
   const [factor, setFactor] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -310,8 +329,14 @@ function PositionsEditor({
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
+    // Lo escrito está en el formato que se ve; se guarda siempre como fracción decimal.
+    const normalized = parsePortionInput(factor, display);
+    if (normalized === null) {
+      setError(portionInputError(display));
+      return;
+    }
     startTransition(async () => {
-      const failure = await actions.addPosition(name, factor);
+      const failure = await actions.addPosition(name, normalized);
       setError(failure);
       if (!failure) {
         setName('');
@@ -328,13 +353,15 @@ function PositionsEditor({
           Puestos y porciones
         </CardTitle>
         <CardDescription>
-          La porción por hora define cuánto vale cada hora trabajada en ese puesto (provisional).
-          Cambiar una porción o agregar un puesto crea una nueva versión de la política.
+          La porción es el factor del puesto: cuánto pesa cada hora trabajada en ese puesto
+          (provisional). Cambiar una porción o agregar un puesto crea una nueva versión de la
+          política. Los puntos individuales de cada persona se cargan en Personal.
         </CardDescription>
         <CardAction>
           <OriginBadge customized={positionsCustomized(version)} />
         </CardAction>
       </CardHeader>
+      <PortionDisplayControl view={view} canEdit={canEdit} actions={actions} />
       <ul className="divide-y border-t">
         {version.positions.map((position) => (
           <PositionRow
@@ -344,6 +371,7 @@ function PositionsEditor({
             people={view.peopleByPosition[position.id] ?? 0}
             canEdit={canEdit}
             actions={actions}
+            display={display}
           />
         ))}
       </ul>
@@ -362,9 +390,9 @@ function PositionsEditor({
               }}
             />
             <Input
-              aria-label="Porción del puesto"
+              aria-label={display === 'PERCENT' ? 'Porción del puesto (%)' : 'Porción del puesto'}
               inputMode="decimal"
-              placeholder="0,015"
+              placeholder={portionPlaceholder(display)}
               className="tabular sm:w-32"
               value={factor}
               onChange={(event) => {
@@ -394,22 +422,31 @@ function PositionRow({
   people,
   canEdit,
   actions,
+  display,
 }: {
   position: Position;
   positions: readonly Position[];
   people: number;
   canEdit: boolean;
   actions: DistributionConfigActions;
+  display: PortionDisplay;
 }) {
+  /** Valor para editar en el formato visible, sin el signo ("2,2" en porcentaje). */
+  const editable = formatPortion(position.factor, display).replace(/ %$/, '');
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(position.factor);
+  const [value, setValue] = useState(editable);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
+    const normalized = parsePortionInput(value, display);
+    if (normalized === null) {
+      setError(portionInputError(display));
+      return;
+    }
     startTransition(async () => {
-      const failure = await actions.setPortion(position.id, value);
+      const failure = await actions.setPortion(position.id, normalized);
       setError(failure);
       if (!failure) setEditing(false);
     });
@@ -424,7 +461,7 @@ function PositionRow({
       {editing ? (
         <form onSubmit={submit} className="ml-auto flex items-center gap-2">
           <Input
-            aria-label={`Porción de ${position.name}`}
+            aria-label={`Porción de ${position.name}${display === 'PERCENT' ? ' (%)' : ''}`}
             inputMode="decimal"
             className="tabular h-8 w-28 text-right"
             value={value}
@@ -443,7 +480,7 @@ function PositionRow({
             variant="ghost"
             onClick={() => {
               setEditing(false);
-              setValue(position.factor);
+              setValue(editable);
               setError(null);
             }}
           >
@@ -452,9 +489,18 @@ function PositionRow({
         </form>
       ) : (
         <span className="ml-auto flex items-center gap-3">
-          <span className="tabular font-medium">porción {position.factor}</span>
+          <span className="tabular font-medium">
+            porción {formatPortion(position.factor, display)}
+          </span>
           {canEdit ? (
-            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setValue(editable);
+                setEditing(true);
+              }}
+            >
               Cambiar
             </Button>
           ) : null}
@@ -466,6 +512,60 @@ function PositionRow({
         </p>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * Cómo se muestran las porciones: decimal (0,022) o porcentaje (2,2 %). Es solo presentación: el
+ * valor guardado y el cálculo no cambian y NO se crea una versión de la política.
+ */
+function PortionDisplayControl({
+  view,
+  canEdit,
+  actions,
+}: {
+  view: View;
+  canEdit: boolean;
+  actions: DistributionConfigActions;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const setDisplay = actions.setPortionDisplay;
+  if (!setDisplay) return null;
+  return (
+    <div className="space-y-1 border-t bg-muted/20 px-5 py-3 text-sm">
+      <fieldset
+        className="flex flex-wrap items-center gap-x-4 gap-y-2"
+        disabled={!canEdit || pending}
+      >
+        <legend className="float-left mr-2 font-medium">Mostrar la porción como</legend>
+        {PORTION_DISPLAYS.map((display) => (
+          <label key={display} className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="portion-display"
+              className="size-4 accent-[var(--primary)]"
+              checked={view.portionDisplay === display}
+              onChange={() =>
+                startTransition(async () => {
+                  setError(await setDisplay(display));
+                })
+              }
+            />
+            {PORTION_DISPLAY_LABEL[display]}
+          </label>
+        ))}
+      </fieldset>
+      <p className="text-xs text-muted-foreground">
+        Solo cambia cómo se ve y se escribe: el valor guardado es el mismo y no se crea una versión
+        de la política.
+      </p>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

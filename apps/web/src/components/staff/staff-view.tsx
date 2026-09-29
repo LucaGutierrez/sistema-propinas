@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { methodUses } from '@/lib/distribution/participation';
+import { formatPortion } from '@/lib/policy/portion-format';
 import type { StaffActions, StaffMemberView, StaffView as StaffViewModel } from '@/lib/staff/view';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +37,16 @@ function Initials({ name, muted }: { name: string; muted?: boolean }) {
   );
 }
 
+/** Porción del puesto en el formato del restaurante ("0,022" o "2,2 %"). */
+function portionOf(view: StaffViewModel, factor: string): string {
+  return formatPortion(factor, view.portionDisplay ?? 'DECIMAL');
+}
+
+/** ¿Los puntos individuales intervienen en el método vigente? */
+function pointsCount(view: StaffViewModel): boolean {
+  return view.method !== undefined && methodUses(view.method).points;
+}
+
 /**
  * "Personal": quiénes trabajan y en qué puesto. No sabe de dónde vienen los datos: la demo y la
  * base arman el mismo `StaffView` y ofrecen las mismas acciones.
@@ -54,8 +66,10 @@ export function StaffView({
     <>
       <PageHeader
         title="Personal"
-        description="Quiénes trabajan y en qué puesto. Agregar, dar de baja o cambiar el puesto de alguien no cambia la política."
+        description="Quiénes trabajan, en qué puesto y con cuántos puntos. Agregar, dar de baja o cambiar el puesto o los puntos de alguien no cambia la política."
       />
+
+      {actions.setPoints ? <PointsNotice view={view} /> : null}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
@@ -116,6 +130,8 @@ function StaffRow({
   actions: StaffActions;
 }) {
   const [editing, setEditing] = useState(false);
+  const [editingPoints, setEditingPoints] = useState(false);
+  const [points, setPoints] = useState(member.individualPoints ?? '');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const position = view.positions.find((p) => p.id === member.positionId);
@@ -136,7 +152,51 @@ function StaffRow({
         <p className={cn('truncate font-medium', !member.active && 'text-muted-foreground')}>
           {member.name}
         </p>
-        <p className="text-xs text-muted-foreground">porción {position?.factor ?? '—'}</p>
+        <p className="text-xs text-muted-foreground">
+          Porción {position ? portionOf(view, position.factor) : '—'}
+          {member.individualPoints !== undefined ? (
+            <>
+              {' · '}
+              {member.individualPoints} {member.individualPoints === '1,00' ? 'punto' : 'puntos'}
+              {pointsCount(view) ? null : ' (no se usan con el método vigente)'}
+            </>
+          ) : null}
+        </p>
+        {editingPoints && actions.setPoints ? (
+          <form
+            className="mt-1 flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const savePoints = actions.setPoints;
+              if (!savePoints) return;
+              setEditingPoints(false);
+              run(() => savePoints(member.id, points));
+            }}
+          >
+            <Input
+              aria-label={`Puntos de ${member.name}`}
+              inputMode="decimal"
+              className="tabular h-8 w-24 text-right"
+              value={points}
+              onChange={(event) => setPoints(event.target.value)}
+              autoFocus
+            />
+            <Button type="submit" size="sm" disabled={pending}>
+              Guardar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setEditingPoints(false);
+                setPoints(member.individualPoints ?? '');
+              }}
+            >
+              Cancelar
+            </Button>
+          </form>
+        ) : null}
         {error ? (
           <p role="alert" className="text-xs text-destructive">
             {error}
@@ -159,7 +219,7 @@ function StaffRow({
           {position ? null : <option value={member.positionId}>Sin puesto</option>}
           {view.positions.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name} ({p.factor})
+              {p.name} ({portionOf(view, p.factor)})
             </option>
           ))}
         </select>
@@ -177,6 +237,20 @@ function StaffRow({
           />
         </button>
       )}
+      {canEdit && member.active && actions.setPoints && !editingPoints ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={pending}
+          aria-label={`Cambiar los puntos de ${member.name}`}
+          onClick={() => {
+            setPoints(member.individualPoints ?? '');
+            setEditingPoints(true);
+          }}
+        >
+          Puntos
+        </Button>
+      ) : null}
       {!canEdit ? null : member.active ? (
         <Button
           variant="ghost"
@@ -266,7 +340,7 @@ function AddStaffForm({ view, actions }: { view: StaffViewModel; actions: StaffA
             >
               {view.positions.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} (porción {p.factor})
+                  {p.name} (porción {portionOf(view, p.factor)})
                 </option>
               ))}
             </select>
@@ -314,7 +388,8 @@ function PositionsCard({ view }: { view: StaffViewModel }) {
               <li key={position.id} className="flex items-center justify-between gap-2 text-sm">
                 <PositionBadge name={position.name} tone={toneOf(positions, position.id)} />
                 <span className="tabular text-muted-foreground">
-                  porción {position.factor} · {people} {people === 1 ? 'persona' : 'personas'}
+                  porción {portionOf(view, position.factor)} · {people}{' '}
+                  {people === 1 ? 'persona' : 'personas'}
                 </span>
               </li>
             );
@@ -325,5 +400,30 @@ function PositionsCard({ view }: { view: StaffViewModel }) {
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+const METHOD_TEXT = {
+  BY_POSITION:
+    'El método vigente es "Por puesto": se reparte por horas × porción del puesto. Los puntos se guardan pero no intervienen hasta que el método los use.',
+  BY_POINTS:
+    'El método vigente es "Por puntos individuales": se reparte por horas × puntos de cada persona. La porción del puesto no interviene.',
+  BY_POSITION_TIMES_POINTS:
+    'El método vigente es "Puesto × puntos": se reparte por horas × porción del puesto × puntos de cada persona.',
+} as const;
+
+/** Qué es cada cosa: Porción = factor del puesto (política) · Puntos = de cada persona. */
+function PointsNotice({ view }: { view: StaffViewModel }) {
+  return (
+    <div className="mb-6 rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+      <p>
+        <span className="font-medium text-foreground">Porción</span> = factor del puesto (se define
+        en Configuración y es parte de la política).{' '}
+        <span className="font-medium text-foreground">Puntos</span> = puntos individuales de cada
+        persona (se definen acá; 1,00 por defecto). Cambiar los puntos no crea una versión de la
+        política ni cambia los repartos ya cerrados.
+      </p>
+      {view.method ? <p className="mt-1">{METHOD_TEXT[view.method]}</p> : null}
+    </div>
   );
 }

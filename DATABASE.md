@@ -4,7 +4,7 @@ Fuente de verdad del esquema. `ARCHITECTURE.md` explica el *por qué*; este docu
 
 Motor: PostgreSQL. ORM: Prisma (el `schema.prisma` se derivará de este documento).
 
-**Revisión 6** (política de distribución versionada por restaurante — `CONFIG-MODEL.md`; repartos de un día o de un período; horas del período; migración `20260926000000_distribution_policies`). Rev. 5: inmutabilidad reforzada de adelantos, sobres y liquidaciones; migración inicial. Rev. 4: reversión auditada de entregas, tokens de email. Tres conceptos distintos que no se reemplazan entre sí:
+**Revisión 7** (M1, 2026-09-29: métodos de participación —`portion_mode` BY_POSITION / BY_POINTS / BY_POSITION_TIMES_POINTS—, puntos individuales del empleado con su snapshot en cada ítem y formato de la porción del restaurante; migración `20260929000000_participation_methods`, aditiva). Rev. 6 (política de distribución versionada por restaurante — `CONFIG-MODEL.md`; repartos de un día o de un período; horas del período; migración `20260926000000_distribution_policies`). Rev. 5: inmutabilidad reforzada de adelantos, sobres y liquidaciones; migración inicial. Rev. 4: reversión auditada de entregas, tokens de email. Tres conceptos distintos que no se reemplazan entre sí:
 
 | Concepto | Tablas | Qué es |
 |---|---|---|
@@ -33,13 +33,14 @@ Encima de los tres conceptos está la **política de distribución** (`distribut
 - **IDs:** `uuid`. **Timestamps:** `created_at`, `updated_at` (`timestamptz`) en las tablas editables. Las filas que nacen inmutables o son de solo inserción (`auth_tokens`, `daily_distribution_items`, `advance_applications`, `audit_log`) solo tienen `created_at`; `weekly_payment_events` usa `occurred_at`; `rate_limits` usa `window_start`.
 - **Dinero:** `BIGINT` en **centavos** (ARS y USD). Nunca `FLOAT`/`REAL`/`DOUBLE`. $347.990,00 → `34799000`.
 - **Cotización:** `NUMERIC(18,6)` (pesos por 1 USD).
-- **Horas:** `NUMERIC(6,2)`. **Porción** del puesto (en la interfaz, "porción"; en el código y la base, `portion`): `NUMERIC(20,10)`, suficiente para 0,65/45 = 0,0144444444 sin alterar los resultados de Library. **Puntos:** `NUMERIC(30,12)` (= horas × porción, exacto). **Porcentaje:** `NUMERIC(9,6)` (fracción 0–1).
+- **Horas:** `NUMERIC(6,2)`. **Porción** del puesto (en la interfaz, "porción"; en el código y la base, `portion`): `NUMERIC(20,10)`, suficiente para 0,65/45 = 0,0144444444 sin alterar los resultados de Library. **Puntos individuales** del empleado (en la interfaz, "Puntos"): `NUMERIC(6,2)`, > 0, 1,00 por defecto. **Ponderado** (en la base, `points`; en la interfaz, "Ponderado"): `NUMERIC(30,12)` = horas × porción y/o puntos según el método de participación, exacto (horas E2 × porción E4 × puntos E2 = 8 decimales). **Porcentaje** (en la interfaz, "Participación"): `NUMERIC(9,6)` (fracción 0–1).
+- **Porción decimal o porcentaje:** la porción se guarda SIEMPRE como fracción decimal (0,022). Mostrarla como 2,2 % es una preferencia del restaurante (`restaurants.portion_display`), no de la política: no crea versión ni cambia ningún número.
 - **Fechas de negocio** (`date_from`, `date_to`, `entry_date`, `week_start`, `week_end`, `exchange_rate_date`, `advances.date`): `DATE`, sin hora, en la zona horaria del restaurante.
 - **Período:** lo define la versión de la política (`period_kind`, hoy solo `WEEKLY`, y `period_start_weekday` 1–7). La configuración estándar empieza el lunes, pero cada restaurante puede elegir otro día: no está fijo en la base. `week_end = week_start + 6`.
 - **Multi-tenant:** toda tabla de negocio lleva `restaurant_id`; toda consulta lo filtra.
 - **Sin borrado físico** de historial: se anula (`VOIDED`). Catálogos: `archived_at`.
 - **FKs** `ON DELETE RESTRICT` en todo el historial.
-- **Snapshots:** el historial copia nombres, puestos, porciones, horas, puntos, porcentajes, cotizaciones, adelantos y resultados vigentes al momento del cierre; el período cerrado guarda además la configuración usada (`policy_snapshot`) y la versión del cálculo (`calc_version`). Editar un catálogo o crear una versión nueva de la política nunca cambia el pasado.
+- **Snapshots:** el historial copia nombres, puestos, porciones, puntos individuales, horas, ponderados, porcentajes, cotizaciones, adelantos y resultados vigentes al momento del cierre; el período cerrado guarda además la configuración usada (`policy_snapshot`, que incluye `portionMode` y, solo como auditoría, `portionDisplay`) y la versión del cálculo (`calc_version`: `provisional-1` = horas × porción, BY_POSITION; `provisional-2` = métodos con puntos individuales). Editar un catálogo, los puntos de una persona o crear una versión nueva de la política nunca cambia el pasado.
 - **Sin JSON como modelo:** la política es un modelo tipado (columnas y enums). `policy_snapshot` (JSONB) es solo la copia de auditoría del cierre.
 
 ---
@@ -63,7 +64,8 @@ Encima de los tres conceptos está la **política de distribución** (`distribut
 | `HoursEntry` | `PERIOD_TOTAL_AT_CLOSE` (se cargan como total al cerrar) |
 | `PotSources` | `SINGLE_DAILY_AMOUNT` (un monto por día) |
 | `PoolStructure` | `SINGLE_POOL` (un pozo para todo el restaurante) |
-| `PortionMode` | `BY_POSITION` (la porción depende del puesto) |
+| `PortionMode` | Método de participación: `BY_POSITION` (ponderado = horas × porción del puesto), `BY_POINTS` (horas × puntos individuales), `BY_POSITION_TIMES_POINTS` (horas × porción × puntos) |
+| `PortionDisplay` | `DECIMAL` (0,022), `PERCENT` (2,2 %): solo presentación, en `restaurants` |
 | `RoundingUnit` | `CENT`, `PESO` |
 | `AdvanceDeduction` | `WHOLE_PERIOD` (el adelanto se descuenta del período) |
 | `EnvelopeHandlers` | `MANAGER_ONLY`, `MANAGER_AND_EDITOR` |
@@ -125,7 +127,8 @@ Un solo uso (`used_at`), expiración corta (reset: 1 h; verificación: 24 h), al
 **rate_limits** — *(diseño anterior, sin uso; reemplazada por `auth_rate_limits`)* límite de intentos (login, registro, reenvío de emails, reset)
 `key text (ej. 'login:ip:1.2.3.4'), window_start timestamptz, count int` · PK `(key, window_start)`. Vive en Postgres porque en un entorno serverless la memoria no se comparte entre invocaciones.
 
-**restaurants** — `id, name, timezone (default 'America/Argentina/Buenos_Aires'), current_policy_version_id FK distribution_policy_versions null, archived_at`.
+**restaurants** — `id, name, timezone (default 'America/Argentina/Buenos_Aires'), current_policy_version_id FK distribution_policy_versions null, portion_display PortionDisplay NOT NULL DEFAULT 'DECIMAL', archived_at`.
+`portion_display` es solo presentación (cómo se ven y se escriben las porciones): cambiarlo no crea versión de la política y queda en `audit_log` (`restaurant.portion_display_changed`).
 El restaurante **no guarda parámetros de cálculo** (el inicio de semana y el modo de pozo pasaron a la política). `current_policy_version_id` es la versión vigente: la que toman los períodos nuevos. Es `NULL` solo mientras se crea el restaurante (la versión necesita el restaurante); trigger `fn_restaurants_current_policy`: la versión tiene que ser del mismo restaurante y, una vez asignada, no vuelve a `NULL`.
 
 **memberships** — `id, user_id, restaurant_id, role MembershipRole, employee_id FK employees null` · unique `(user_id, restaurant_id)`. Es la **fuente de la autorización** (ARCHITECTURE.md §9). Reglas en la base: un solo `OWNER` por restaurante (`ux_memberships_one_owner`); `SELF` exige empleado (`ck_memberships_self_employee`); un empleado se vincula a lo sumo a una membresía (`ux_memberships_employee`); el empleado es del mismo restaurante (trigger `fn_memberships_employee_same_restaurant`) y un empleado vinculado no cambia de restaurante (`fn_employees_linked_membership_restaurant`). Un usuario con membresías no se puede borrar (RESTRICT).
@@ -137,7 +140,7 @@ El restaurante **no guarda parámetros de cálculo** (el inicio de semana y el m
 **positions** (puestos) — `id, restaurant_id, team_id FK null, name, archived_at` · índice único `ux_positions_restaurant_name (restaurant_id, lower(name))`.
 El puesto es una **identidad estable**: su nombre vive acá y renombrarlo **no crea una versión** de la política. Su **porción** no está en el puesto sino en cada versión (`policy_version_positions`). El equipo es opcional.
 
-**employees** — `id, restaurant_id, first_name, last_name, document_id null, default_position_id FK null, active, archived_at`. El personal **no es parte de la política** (no se versiona): altas, bajas y cambios de puesto no crean versiones.
+**employees** — `id, restaurant_id, first_name, last_name, document_id null, default_position_id FK null, individual_points NUMERIC(6,2) NOT NULL DEFAULT 1 CHECK (> 0) (ck_employees_individual_points), active, archived_at`. El personal **no es parte de la política** (no se versiona): altas, bajas, cambios de puesto y de **puntos individuales** no crean versiones. Los puntos son dato de la persona (como su puesto): el reparto abierto usa los actuales y el cierre congela en cada ítem los que usó (`individual_points_snapshot`); cada cambio queda en `audit_log` (`employee.points_changed`, de cuánto a cuánto).
 
 **exchange_rates** (cotización oficial venta por fecha)
 `id, restaurant_id, date, currency_pair ('USD_ARS'), rate NUMERIC(18,6) CHECK (>0), source RateSource, note, created_by` · unique `(restaurant_id, date, currency_pair)`.
@@ -237,9 +240,10 @@ Con `pool_structure = SINGLE_POOL` (lo único implementado) hay un solo pozo, as
 | employee_name_snapshot | text | |
 | position_name_snapshot | text | |
 | team_name_snapshot | text null | el puesto puede no tener equipo |
-| portion_snapshot | NUMERIC(20,10) | porción del puesto en la versión de la política usada, `CHECK (> 0)` |
+| portion_snapshot | NUMERIC(20,10) null | porción del puesto en la versión de la política usada, `CHECK (> 0)`. **NULL si el método no la usa** (`BY_POINTS`) |
+| individual_points_snapshot | NUMERIC(6,2) null | puntos individuales usados, `CHECK (> 0)`. **NULL si el método no los usa** (`BY_POSITION`) · `CHECK (portion_snapshot IS NOT NULL OR individual_points_snapshot IS NOT NULL)` |
 | hours | NUMERIC(6,2) | `CHECK (hours > 0)`; tope 24 × días del reparto (trigger `fn_ddi_hours_in_range`: 24 en un `DAY`, 168 en un período semanal) |
-| points | NUMERIC(30,12) | `hours × portion_snapshot` |
+| points | NUMERIC(30,12) | **ponderado** = `hours × portion_snapshot` (BY_POSITION), `hours × individual_points_snapshot` (BY_POINTS) o `hours × portion_snapshot × individual_points_snapshot` (BY_POSITION_TIMES_POINTS); exacto |
 | percentage | NUMERIC(9,6) | `points / total_points` (informativo; el monto no se deriva de este valor redondeado) |
 | amount_cents | bigint | **importe bruto** del día (método del mayor resto) |
 | advances_cents | bigint | adelantos descontados ese día |
@@ -468,6 +472,7 @@ La semana siguiente **nunca** se modifica para compensar. El sistema muestra "ya
 | I14 | Adelanto de $40.000 con propina de $30.000 → día en $0 y saldo pendiente $10.000 (caso explícito de test). |
 | I15 | Una versión de la política no cambia nunca (ni ella ni sus puestos y porciones). |
 | I16 | Todo cambio de versión de un período queda en `period_policy_changes`; un período cerrado no cambia de versión y conserva su `policy_snapshot`. |
+| I17 | Un ítem cerrado guarda todo lo que usó su ponderado: la porción (si el método la usa) y los puntos individuales (si los usa). Cambiar después los puntos del empleado, la porción, el método o el formato de la porción no cambia ningún reparto cerrado (triggers + snapshot). |
 
 ---
 
@@ -536,8 +541,9 @@ Bandeja de sobres de la semana: Roro → $516.447 · Leo → $623.450 · Marcos 
 
 ## 10. Migraciones y seed
 
-- Migraciones Prisma versionadas. `CHECK`, índices únicos parciales/por expresión y **triggers de inmutabilidad** se agregan como SQL dentro de la migración (Prisma no los modela). En `apps/web/prisma/sql/`: `constraints.sql` es el **conjunto vigente** (lo usan los tests); `0001_constraints.sql`, `0002_distribution_policies.sql` y `0003_auth.sql` son los deltas que embebe cada migración (congelados una vez aplicados).
+- Migraciones Prisma versionadas. `CHECK`, índices únicos parciales/por expresión y **triggers de inmutabilidad** se agregan como SQL dentro de la migración (Prisma no los modela). En `apps/web/prisma/sql/`: `constraints.sql` es el **conjunto vigente** (lo usan los tests); `0001_constraints.sql`, `0002_distribution_policies.sql`, `0003_auth.sql` y `0004_participation.sql` son los deltas que embebe cada migración (congelados una vez aplicados).
 - **Migración `20260926000000_distribution_policies`:** guarda explícita (falla con `MIGRATION GUARD` si hay filas en `restaurants`, `positions`, `daily_distributions`, `tip_entries`, `advances`, `weekly_settlements` o `weekly_payments`: cambia columnas y tipos que no tienen conversión sin datos de la política), borra el trigger anti-mezcla, DDL de Prisma (`prisma migrate diff` desde el esquema anterior) y copia literal de `sql/0002_distribution_policies.sql` (que crea la extensión `btree_gist` con `IF NOT EXISTS` para la restricción de exclusión; en Neon está en la lista de extensiones permitidas). Probada en PGlite (`test:db`) y con `prisma migrate deploy` sobre PostgreSQL 18 real (`test:pg`, `migrate diff` vacío). **Aplicada en Neon production** (ver "Estado en Neon" más abajo).
+- **Migración `20260929000000_participation_methods` (M1, 2026-09-29; NO aplicada en Neon):** aditiva, sin guarda porque no transforma datos. DDL de Prisma: enum `portion_display`; `portion_mode` + `BY_POINTS`, `BY_POSITION_TIMES_POINTS` (los valores nuevos no se usan en la misma migración); `restaurants.portion_display` (default `DECIMAL`); `employees.individual_points` (default 1); `daily_distribution_items.individual_points_snapshot` y `portion_snapshot` pasa a admitir NULL → copia literal de `sql/0004_participation.sql` (`ck_employees_individual_points`, `ck_ddi_individual_points`, `ck_ddi_weight_inputs`). Lo existente queda así: políticas en `BY_POSITION`, restaurantes en `DECIMAL`, empleados con 1,00 punto e ítems cerrados intactos (con su porción y sin puntos). Probada: en PGlite (`test:db`: mismo catálogo que `constraints.sql`; aplicada sobre una base con restaurante, política, empleados y un reparto CERRADO) y con `prisma migrate deploy` sobre PostgreSQL 18.4 local (`test:pg`, `migrate diff` vacío). Para production: mismo procedimiento que las anteriores (branch de Neon → verificación → production), solo con autorización.
 - **Migración `20260928000000_auth` (Fase 2, aplicada en Neon production el 2026-09-27, ver "Estado en Neon — autenticación"):** no destructiva. Guarda explícita (`MIGRATION GUARD` si hay membresías `ADMIN` o emails con mayúsculas: no borra ni reasigna nada por su cuenta) → DDL de Prisma: `membership_role` pasa a `OWNER, MANAGER, EDITOR, VIEWER, SELF` (conversión por texto: las filas existentes conservan su rol), `users.email_verified` (default false) e `image`, `memberships.employee_id`, tablas `sessions`, `accounts`, `verifications`, `auth_rate_limits` → `email_verified = true` donde había `email_verified_at` → copia literal de `sql/0003_auth.sql`. Probada: en PGlite (`test:db`: mismo catálogo que `constraints.sql`; conserva usuario y membresía; guardas), con `prisma migrate deploy` sobre PostgreSQL 18 (`test:pg`, `migrate diff` vacío) y sobre una base local con **los mismos datos que Neon** (usuario sin contraseña, restaurante, OWNER, v1 y v2): tras migrar, mismas filas e ids, v2 vigente, Salón 0,022 → 0,025, `migrate status` al día y `migrate diff` vacío.
 - **Migración inicial:** `apps/web/prisma/migrations/20260925000000_init/migration.sql` = DDL generado por Prisma (`prisma migrate diff --from-empty`, sin editar) + copia literal de `sql/0001_constraints.sql` al final. Una migración aplicada no se edita: cualquier cambio posterior va en una migración nueva. `test-db/migrations.test.ts` verifica que la migración contiene el SQL de restricciones y que aplicar las migraciones en orden produce exactamente el mismo catálogo (columnas, restricciones, índices, triggers, funciones y enums) que la base usada por los demás tests.
 - **Verificación de la migración (sin Neon):** se aplicó con `prisma migrate deploy` sobre un PostgreSQL 18.3 local y temporal (PGlite por socket) y `prisma migrate diff` desde esa base hacia `schema.prisma` resultó **vacío**: Prisma no intenta eliminar los índices parciales/por expresión, los CHECK ni los triggers. Desde 2026-09-25 lo mismo se comprueba en cada corrida de `pnpm test:pg` sobre un PostgreSQL real (ver abajo). La migración inicial está **aplicada en Neon** (PostgreSQL 18.6) y verificada sin drift el 2026-09-26.

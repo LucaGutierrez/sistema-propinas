@@ -169,14 +169,17 @@ export function ClosedPeriod({
             positionName: r.positionName,
             hoursE2: hoursE2(r.hours),
             factor: r.factor,
-            pointsE6: BigInt(r.pointsE6),
+            individualPoints: r.individualPoints,
+            weightE8: BigInt(r.weightE8),
             amountCents: BigInt(r.amountCents),
             advanceCents: BigInt(r.advancesCents),
             finalCents: BigInt(r.finalCents),
           }))}
           totalCents={BigInt(view.totalCents)}
-          totalPointsE6={BigInt(view.totalPointsE6)}
+          totalWeightE8={BigInt(view.totalWeightE8)}
           roundingLabel={view.roundingUnit === 'PESO' ? 'pesos enteros' : 'centavos'}
+          method={view.method}
+          portionDisplay={view.portionDisplay}
         />
       </div>
 

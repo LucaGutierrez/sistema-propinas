@@ -25,11 +25,13 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
     // Porción con 10 decimales: representa 0,65/45 = 0,0144444444 sin perder los resultados de Library.
     ['policy_version_positions', 'portion', 20, 10],
     ['daily_distribution_items', 'portion_snapshot', 20, 10],
+    ['daily_distribution_items', 'individual_points_snapshot', 6, 2],
     ['daily_distribution_items', 'hours', 6, 2],
     ['daily_distribution_items', 'points', 30, 12],
     ['daily_distribution_items', 'percentage', 9, 6],
     ['daily_distributions', 'total_points', 30, 12],
     ['period_hours', 'hours', 6, 2],
+    ['employees', 'individual_points', 6, 2],
     ['exchange_rates', 'rate', 18, 6],
     ['tip_entries', 'exchange_rate', 18, 6],
   ])('%s.%s es NUMERIC(%i,%i) exacto', async (table, column, precision, scale) => {
@@ -123,7 +125,8 @@ describe('schema: tipos y decisiones de DATABASE.md §1–§2', () => {
       period_kind: ['WEEKLY'],
       policy_origin: ['STANDARD', 'COPY', 'CHANGE'],
       pool_structure: ['SINGLE_POOL'],
-      portion_mode: ['BY_POSITION'],
+      portion_display: ['DECIMAL', 'PERCENT'],
+      portion_mode: ['BY_POSITION', 'BY_POINTS', 'BY_POSITION_TIMES_POINTS'],
       pot_sources: ['SINGLE_DAILY_AMOUNT'],
       rate_source: ['MANUAL', 'API'],
       rounding_unit: ['CENT', 'PESO'],

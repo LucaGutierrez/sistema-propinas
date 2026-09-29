@@ -5,10 +5,12 @@
 import { assertRole, type AccessContext } from '../access/access';
 import { CAN, roleAllowed } from '../access/roles';
 import type { Db } from '../db';
+import type { PortionDisplay } from '@/lib/policy/portion-format';
 import type { DistributionConfigView } from '@/lib/policy/view';
 import { getDistributionConfigView } from './repository';
 import {
   changePolicy,
+  setPortionDisplay,
   type PolicyChangeRequest,
   type PolicyChangeResult,
   type ServiceResult,
@@ -37,4 +39,18 @@ export async function changeDistributionConfig(
 ): Promise<ServiceResult<PolicyChangeResult>> {
   assertRole(access, CAN.editDistributionConfig);
   return changePolicy(db, { restaurantId: access.restaurantId, userId: access.userId }, request);
+}
+
+/** Cambia cómo se muestran las porciones (no crea versión). Mismo permiso que configurar. */
+export async function changePortionDisplay(
+  db: Db,
+  access: AccessContext,
+  display: PortionDisplay,
+): Promise<ServiceResult<{ portionDisplay: PortionDisplay; changed: boolean }>> {
+  assertRole(access, CAN.editDistributionConfig);
+  return setPortionDisplay(
+    db,
+    { restaurantId: access.restaurantId, userId: access.userId },
+    display,
+  );
 }

@@ -206,7 +206,7 @@ async function snapshot(settlementId: string) {
     items: items.map((i) => ({
       ...i,
       hours: i.hours.toString(),
-      portionSnapshot: i.portionSnapshot.toString(),
+      portionSnapshot: i.portionSnapshot?.toString(),
       points: i.points.toString(),
     })),
   };

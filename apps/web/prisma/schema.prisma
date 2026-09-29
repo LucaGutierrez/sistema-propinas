@@ -90,11 +90,24 @@ enum PoolStructure {
   @@map("pool_structure")
 }
 
-/// De qué depende la porción de cada hora: del puesto.
+/// Método de participación (cómo se calcula el ponderado de cada persona):
+/// BY_POSITION = horas × porción del puesto · BY_POINTS = horas × puntos individuales ·
+/// BY_POSITION_TIMES_POINTS = horas × porción × puntos individuales.
 enum PortionMode {
   BY_POSITION
+  BY_POINTS
+  BY_POSITION_TIMES_POINTS
 
   @@map("portion_mode")
+}
+
+/// Cómo se MUESTRA la porción de los puestos (0,022 o 2,2 %). Solo presentación: la porción se
+/// guarda siempre como fracción decimal y cambiar esto no crea una versión de la política.
+enum PortionDisplay {
+  DECIMAL
+  PERCENT
+
+  @@map("portion_display")
 }
 
 /// Unidad del reparto (mayor resto en esa unidad).
@@ -326,14 +339,16 @@ model RateLimit {
 
 /// El día de inicio del período y la estructura del pozo viven en la política de distribución.
 model Restaurant {
-  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                   String
-  timezone               String    @default("America/Argentina/Buenos_Aires")
+  timezone               String         @default("America/Argentina/Buenos_Aires")
   /// Versión vigente de la política (la que toman los períodos nuevos). Null solo mientras se crea el restaurante.
-  currentPolicyVersionId String?   @map("current_policy_version_id") @db.Uuid
-  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  archivedAt             DateTime? @map("archived_at") @db.Timestamptz(6)
+  currentPolicyVersionId String?        @map("current_policy_version_id") @db.Uuid
+  /// Preferencia de presentación de las porciones (no es parte de la política: no se versiona).
+  portionDisplay         PortionDisplay @default(DECIMAL) @map("portion_display")
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt             DateTime?      @map("archived_at") @db.Timestamptz(6)
 
   currentPolicyVersion DistributionPolicyVersion?  @relation("RestaurantCurrentPolicyVersion", fields: [currentPolicyVersionId], references: [id], onDelete: Restrict)
   policyVersions       DistributionPolicyVersion[] @relation("RestaurantPolicyVersions")
@@ -423,6 +438,9 @@ model Employee {
   lastName          String    @map("last_name")
   documentId        String?   @map("document_id")
   defaultPositionId String?   @map("default_position_id") @db.Uuid
+  /// Puntos individuales (> 0, CHECK en sql). Dato del empleado, no de la política: no se versiona;
+  /// el valor usado se congela en cada ítem al cerrar (individual_points_snapshot).
+  individualPoints  Decimal   @default(1) @map("individual_points") @db.Decimal(6, 2)
   active            Boolean   @default(true)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -532,27 +550,30 @@ model TipEntry {
 
 /// Una fila por empleado que trabajó ese día. Todo es snapshot al cerrar.
 model DailyDistributionItem {
-  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  dailyDistributionId  String   @map("daily_distribution_id") @db.Uuid
-  employeeId           String   @map("employee_id") @db.Uuid
-  positionId           String   @map("position_id") @db.Uuid
-  employeeNameSnapshot String   @map("employee_name_snapshot")
-  positionNameSnapshot String   @map("position_name_snapshot")
-  teamNameSnapshot     String?  @map("team_name_snapshot")
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dailyDistributionId      String   @map("daily_distribution_id") @db.Uuid
+  employeeId               String   @map("employee_id") @db.Uuid
+  positionId               String   @map("position_id") @db.Uuid
+  employeeNameSnapshot     String   @map("employee_name_snapshot")
+  positionNameSnapshot     String   @map("position_name_snapshot")
+  teamNameSnapshot         String?  @map("team_name_snapshot")
   /// Porción por hora del puesto en la versión de la política usada (p. ej. 0,65 ÷ 45).
-  portionSnapshot      Decimal  @map("portion_snapshot") @db.Decimal(20, 10)
+  /// Null si el método de participación no la usa (BY_POINTS).
+  portionSnapshot          Decimal? @map("portion_snapshot") @db.Decimal(20, 10)
+  /// Puntos individuales usados. Null si el método no los usa (BY_POSITION).
+  individualPointsSnapshot Decimal? @map("individual_points_snapshot") @db.Decimal(6, 2)
   /// Horas del alcance del reparto (del día o del período).
-  hours                Decimal  @db.Decimal(6, 2)
-  /// horas × porción (exacto)
-  points               Decimal  @db.Decimal(30, 12)
+  hours                    Decimal  @db.Decimal(6, 2)
+  /// Ponderado = horas × porción y/o puntos según el método (exacto).
+  points                   Decimal  @db.Decimal(30, 12)
   /// points / total_points (informativo; el monto no se deriva de este valor redondeado)
-  percentage           Decimal  @db.Decimal(9, 6)
+  percentage               Decimal  @db.Decimal(9, 6)
   /// Importe bruto del día (método del mayor resto).
-  amountCents          BigInt   @map("amount_cents")
-  advancesCents        BigInt   @default(0) @map("advances_cents")
+  amountCents              BigInt   @map("amount_cents")
+  advancesCents            BigInt   @default(0) @map("advances_cents")
   /// Importe final del día = amount_cents − advances_cents.
-  finalCents           BigInt   @map("final_cents")
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  finalCents               BigInt   @map("final_cents")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   dailyDistribution   DailyDistribution    @relation(fields: [dailyDistributionId], references: [id], onDelete: Restrict)
   employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)

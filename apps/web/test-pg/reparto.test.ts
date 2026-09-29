@@ -333,7 +333,7 @@ describe('cerrar el reparto', () => {
     expect(distribution.totalPoints.toFixed(6)).toBe('5.398000');
     const ivan = distribution.items.find((i) => i.employeeId === ids.Ivan);
     expect(ivan?.hours.toFixed(2)).toBe('45.00');
-    expect(ivan?.portionSnapshot.toFixed(3)).toBe('0.014');
+    expect(ivan?.portionSnapshot?.toFixed(3)).toBe('0.014');
     expect(ivan?.points.toFixed(3)).toBe('0.630');
     expect(ivan?.amountCents).toBe(4_061_388n);
 

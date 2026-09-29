@@ -14,6 +14,7 @@ import type { Prisma } from '@prisma/client';
 import type { EnvelopeEventType, EnvelopeStatus } from '@/lib/envelopes/view';
 import { divRoundHalfUp } from '@/lib/decimal';
 import { HISTORY_PAGE_SIZE } from '@/lib/history/filters';
+import { participationMethodOf } from '@/lib/policy/db-mapping';
 import { hoursText } from '@/lib/distribution/period-view';
 import type {
   HistoryAdvance,
@@ -26,7 +27,7 @@ import type {
 import { employeeScope, type AccessContext } from '../access/access';
 import { CAN, roleAllowed } from '../access/roles';
 import type { DbClient } from '../policy/repository';
-import { displayName } from '../staff/repository';
+import { displayName, pointsText } from '../staff/repository';
 
 const isoOf = (date: Date): string => date.toISOString().slice(0, 10);
 /** uuid que no existe: filtra "ninguno" sin romper el tipo uuid de la columna. */
@@ -139,6 +140,7 @@ const itemSelect = {
   employeeNameSnapshot: true,
   positionNameSnapshot: true,
   portionSnapshot: true,
+  individualPointsSnapshot: true,
   hours: true,
   points: true,
   percentage: true,
@@ -189,6 +191,9 @@ export async function getHistoryDetail(
       voidReason: true,
       policySnapshot: true,
       calcVersion: true,
+      // El método de la versión usada (una versión no cambia nunca) y la preferencia de formato.
+      policyVersion: { select: { portionMode: true } },
+      restaurant: { select: { portionDisplay: true } },
       supersedesSettlementId: true,
       supersededBy: { select: { id: true, status: true } },
       totalCents: true,
@@ -319,7 +324,11 @@ export async function getHistoryDetail(
             name: i.employeeNameSnapshot,
             positionName: i.positionNameSnapshot,
             hours: hoursText(i.hours.toFixed(2)),
-            factor: portionText(i.portionSnapshot),
+            factor: i.portionSnapshot ? portionText(i.portionSnapshot) : null,
+            individualPoints: i.individualPointsSnapshot
+              ? pointsText(i.individualPointsSnapshot)
+              : null,
+            weightE8: scaled(i.points, 8),
             pointsE6: scaled(i.points, 6),
             // La fracción guardada (0..1, 6 decimales) → centésimas de punto porcentual.
             percentE2: divRoundHalfUp(BigInt(scaled(i.percentage, 6)), 100n).toString(),
@@ -334,7 +343,9 @@ export async function getHistoryDetail(
           name: p.employeeNameSnapshot,
           positionName: '—',
           hours: '—',
-          factor: '—',
+          factor: null,
+          individualPoints: null,
+          weightE8: '',
           pointsE6: '',
           percentE2: '',
           grossCents: p.grossCents.toString(),
@@ -404,6 +415,8 @@ export async function getHistoryDetail(
     voidReason: settlement.voidReason,
     policyNumber: info.number,
     roundingUnit: info.rounding,
+    method: participationMethodOf(settlement.policyVersion.portionMode),
+    portionDisplay: settlement.restaurant.portionDisplay,
     calcVersion: settlement.calcVersion,
     totals: own
       ? null
@@ -412,6 +425,7 @@ export async function getHistoryDetail(
           advancesCents: (settlement.totalAdvancesCents ?? 0n).toString(),
           finalCents: (settlement.totalFinalCents ?? 0n).toString(),
           pointsE6: distribution ? scaled(distribution.totalPoints, 6) : '0',
+          weightE8: distribution ? scaled(distribution.totalPoints, 8) : '0',
           participants: items.length > 0 ? items.length : payments.length,
         },
     detailAvailable: items.length > 0,

@@ -18,6 +18,12 @@ import type { PrismaClient } from '@prisma/client';
 import { addDays, formatShortDate, periodStartOf, todayInTimeZone } from '@/lib/dates';
 import { buildPeriodPreview } from '@/lib/distribution/period-preview';
 import { PERIOD_TOTAL_NOTE } from '@/lib/distribution/period-view';
+import {
+  INDIVIDUAL_POINTS_SCALE,
+  methodUses,
+  WEIGHT_SCALE,
+  type ParticipationMethod,
+} from '@/lib/distribution/participation';
 import { FORMULA_STATUS } from '@/lib/distribution/provisional-formula';
 import { formatScaled } from '@/lib/decimal';
 import { assertRole, type AccessContext } from '../access/access';
@@ -36,8 +42,17 @@ import type {
   VoidPeriodInput,
 } from './schemas';
 
-/** Versión del cálculo que queda registrada en cada cierre. */
+/**
+ * Versión del cálculo que queda registrada en cada cierre. `provisional-1` es horas × porción
+ * (BY_POSITION): el motor de participación da exactamente los mismos importes, así que esos
+ * cierres siguen registrándose igual. Con puntos individuales el cálculo es otro: `provisional-2`.
+ */
 export const CALC_VERSION = 'provisional-1';
+export const CALC_VERSION_WITH_POINTS = 'provisional-2';
+
+export function calcVersionFor(method: ParticipationMethod): string {
+  return method === 'BY_POSITION' ? CALC_VERSION : CALC_VERSION_WITH_POINTS;
+}
 
 const fail = <T>(error: string): ServiceResult<T> => ({ ok: false, error });
 
@@ -637,6 +652,7 @@ export async function closePeriod(
     const preview = buildPeriodPreview({
       totalCents: data.tips.totalCents,
       unitCents: data.unitCents,
+      method: data.method,
       people: data.people,
     });
     if (!preview.canClose) {
@@ -646,7 +662,10 @@ export async function closePeriod(
     }
 
     // El puesto de cada persona es el que usó el cálculo (loadPeriodData): su puesto actual,
-    // con la porción de la versión de la política del período.
+    // con la porción de la versión de la política del período. El snapshot guarda SOLO lo que el
+    // método usó: la porción (si interviene) y los puntos individuales (si intervienen).
+    const uses = methodUses(data.method);
+    const calcVersion = calcVersionFor(data.method);
     const portions = new Map(data.policy.positions.map((p) => [p.positionId, p]));
     const positionOf = new Map(data.people.map((p) => [p.employeeId, p.positionId]));
     const worked = preview.rows.filter((r) => r.state === 'worked');
@@ -662,11 +681,15 @@ export async function closePeriod(
           positionId,
           employeeNameSnapshot: row.name,
           positionNameSnapshot: position?.name ?? '',
-          portionSnapshot: position?.portion ?? '0',
+          portionSnapshot: uses.factor ? (position?.portion ?? '0') : null,
+          individualPointsSnapshot: uses.points
+            ? decimalText(row.pointsE2 ?? 0n, INDIVIDUAL_POINTS_SCALE)
+            : null,
           hours: decimalText(row.hoursE2 ?? 0n, 2),
-          points: decimalText(row.pointsE6, 6),
+          // Ponderado exacto (E8). Con BY_POSITION es el mismo número que antes (horas × porción).
+          points: decimalText(row.weightE8, WEIGHT_SCALE),
           percentage: decimalText(
-            (row.pointsE6 * 1_000_000n * 2n + preview.totalPointsE6) / (preview.totalPointsE6 * 2n),
+            (row.weightE8 * 1_000_000n * 2n + preview.totalWeightE8) / (preview.totalWeightE8 * 2n),
             6,
           ),
           amountCents: row.amountCents,
@@ -715,7 +738,7 @@ export async function closePeriod(
         status: 'CLOSED',
         tipsArsCents: preview.totalCents,
         totalCents: preview.totalCents,
-        totalPoints: decimalText(preview.totalPointsE6, 6),
+        totalPoints: decimalText(preview.totalWeightE8, WEIGHT_SCALE),
         totalAdvancesCents: preview.totalAdvanceCents,
         totalFinalCents: preview.totalFinalCents,
         closedAt: now,
@@ -762,6 +785,10 @@ export async function closePeriod(
     }
 
     // 5) Período cerrado con la configuración usada (snapshot) y bitácora.
+    const restaurant = await tx.restaurant.findUnique({
+      where: { id: access.restaurantId },
+      select: { portionDisplay: true },
+    });
     await tx.weeklySettlement.update({
       where: { id: period.id },
       data: {
@@ -772,14 +799,18 @@ export async function closePeriod(
           values: { ...data.policy.values },
           periodStartWeekday: data.policy.columns.periodStartWeekday,
           roundingUnit: data.policy.columns.roundingUnit,
+          // Método de participación usado (los puntos de cada persona quedan en su ítem).
+          portionMode: data.policy.columns.portionMode,
           positions: data.policy.positions.map((p) => ({
             positionId: p.positionId,
             name: p.name,
             portion: p.portion,
           })),
+          // Cómo se mostraba la porción al cerrar (solo auditoría: no interviene en el cálculo).
+          portionDisplay: restaurant?.portionDisplay ?? 'DECIMAL',
           formula: FORMULA_STATUS,
         },
-        calcVersion: CALC_VERSION,
+        calcVersion,
         totalCents: preview.totalCents,
         totalAdvancesCents: preview.totalAdvanceCents,
         totalFinalCents: preview.totalFinalCents,
@@ -799,7 +830,8 @@ export async function closePeriod(
           totalCents: preview.totalCents.toString(),
           totalFinalCents: preview.totalFinalCents.toString(),
           people: worked.length,
-          calcVersion: CALC_VERSION,
+          calcVersion,
+          method: data.method,
         },
       },
     });

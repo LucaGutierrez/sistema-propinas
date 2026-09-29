@@ -6,6 +6,8 @@
  * - El puesto de una persona es la identidad estable (`positions.id`) y tiene que ser un puesto de
  *   la política VIGENTE del restaurante. Cambiar el puesto de alguien no crea una versión de la
  *   política; cambiar la porción de un puesto (en Configuración) no toca a las personas.
+ * - Los puntos individuales son del empleado (no de la política): cambiarlos no crea versión. Un
+ *   reparto cerrado conserva los puntos que usó (snapshot en su ítem), así que nunca cambia.
  * - Cada operación es UNA transacción que bloquea el restaurante (`FOR UPDATE`), igual que la
  *   política: dos altas simultáneas con el mismo nombre se ordenan y la segunda se rechaza.
  */
@@ -15,7 +17,12 @@ import { CAN } from '../access/roles';
 import { getCurrentPolicy, type DbClient } from '../policy/repository';
 import { TX_OPTIONS, type ServiceResult } from '../policy/service';
 import { displayName } from './repository';
-import type { AddStaffInput, SetStaffActiveInput, SetStaffPositionInput } from './schemas';
+import type {
+  AddStaffInput,
+  SetStaffActiveInput,
+  SetStaffPointsInput,
+  SetStaffPositionInput,
+} from './schemas';
 
 const fail = <T>(error: string): ServiceResult<T> => ({ ok: false, error });
 
@@ -132,5 +139,46 @@ export async function setEmployeeActive(
     }
     await tx.employee.update({ where: { id: employee.id }, data: { active: input.active } });
     return { ok: true, value: { employeeId: employee.id } };
+  }, TX_OPTIONS);
+}
+
+/**
+ * Cambia los puntos individuales de una persona activa. No crea versión de la política; queda en la
+ * bitácora (de cuánto a cuánto y quién). Los repartos cerrados no cambian (usan su snapshot); el
+ * reparto abierto se recalcula con el valor nuevo hasta que se cierre.
+ */
+export async function setEmployeePoints(
+  db: PrismaClient,
+  access: AccessContext,
+  input: SetStaffPointsInput,
+): Promise<ServiceResult<{ employeeId: string; points: string }>> {
+  assertRole(access, CAN.manageStaff);
+  return db.$transaction(async (tx) => {
+    if (!(await lockRestaurant(tx, access.restaurantId))) return fail('El restaurante no existe.');
+    const employee = await tx.employee.findFirst({
+      where: { id: input.employeeId, restaurantId: access.restaurantId, archivedAt: null },
+      select: { id: true, active: true, individualPoints: true },
+    });
+    if (!employee) return fail(NOT_FOUND);
+    if (!employee.active) return fail('Reactivá a la persona antes de cambiar sus puntos.');
+    const previous = employee.individualPoints.toFixed(2);
+    if (previous === input.points) {
+      return { ok: true, value: { employeeId: employee.id, points: input.points } };
+    }
+    await tx.employee.update({
+      where: { id: employee.id },
+      data: { individualPoints: input.points },
+    });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: access.restaurantId,
+        userId: access.userId,
+        action: 'employee.points_changed',
+        entity: 'employees',
+        entityId: employee.id,
+        payload: { from: previous, to: input.points },
+      },
+    });
+    return { ok: true, value: { employeeId: employee.id, points: input.points } };
   }, TX_OPTIONS);
 }

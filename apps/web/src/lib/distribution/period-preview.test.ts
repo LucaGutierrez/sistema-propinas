@@ -253,3 +253,175 @@ describe('parseHours', () => {
     expect(parseHours('1,234')).toBeNull();
   });
 });
+
+describe('reparto del período: métodos de participación', () => {
+  const withPoints = (points: Record<string, string>) =>
+    LIBRARY.map((p) => ({ ...p, individualPoints: points[p.name] ?? '1' }));
+
+  it('BY_POSITION (explícito) ignora los puntos y da los importes de siempre', () => {
+    const base = buildPeriodPreview({ totalCents: TOTAL, unitCents: 1n, people: LIBRARY });
+    const explicit = buildPeriodPreview({
+      totalCents: TOTAL,
+      unitCents: 1n,
+      method: 'BY_POSITION',
+      people: withPoints({ Ivan: '3', Jean: '0,5' }),
+    });
+    expect(amounts(explicit)).toEqual(amounts(base));
+    expect(explicit.totalPointsE6).toBe(5_398_000n);
+    expect(explicit.totalWeightE8).toBe(539_800_000n);
+    expect(explicit.hourValues).toEqual(base.hourValues);
+    expect(explicit.pointValueCents).toBe(base.pointValueCents);
+  });
+
+  it('BY_POSITION_TIMES_POINTS con todos en 1,00 = BY_POSITION', () => {
+    const product = buildPeriodPreview({
+      totalCents: TOTAL,
+      unitCents: 1n,
+      method: 'BY_POSITION_TIMES_POINTS',
+      people: withPoints({}),
+    });
+    expect(amounts(product)).toEqual(
+      amounts(buildPeriodPreview({ totalCents: TOTAL, unitCents: 1n, people: LIBRARY })),
+    );
+    expect(product.hourValues).toEqual([]);
+  });
+
+  it('BY_POINTS: la porción no interviene (Bacha y Supervisor pesan igual con igual horas y puntos)', () => {
+    const preview = buildPeriodPreview({
+      totalCents: 10_000n,
+      unitCents: 1n,
+      method: 'BY_POINTS',
+      people: [
+        person('Ana', 'Supervisor', '8', { individualPoints: '1' }),
+        person('Beto', 'Bacha', '8', { individualPoints: '1' }),
+      ],
+    });
+    expect(preview.rows.map((r) => r.amountCents)).toEqual([5_000n, 5_000n]);
+    expect(preview.rows.map((r) => r.weightE8)).toEqual([800_000_000n, 800_000_000n]);
+  });
+
+  it('puntos distintos en el mismo puesto y horas: cobra más quien tiene más puntos', () => {
+    const preview = buildPeriodPreview({
+      totalCents: 10_000_000n,
+      unitCents: 1n,
+      method: 'BY_POSITION_TIMES_POINTS',
+      people: [
+        person('Juan', 'Salón', '40', { individualPoints: '1,20' }),
+        person('Pedro', 'Salón', '40', { individualPoints: '1,00' }),
+        person('Lucas', 'Salón', '40', { individualPoints: '0,80' }),
+      ],
+    });
+    // 1,20 : 1,00 : 0,80 de $ 100.000 → 40 % · 33,33 % · 26,67 %
+    expect(preview.rows.map((r) => r.amountCents)).toEqual([4_000_000n, 3_333_333n, 2_666_667n]);
+    expect(preview.rows.map((r) => r.percentE2)).toEqual([4000n, 3333n, 2667n]);
+  });
+
+  it('el método pide puntos y alguien trabajó sin puntos válidos: bloquea', () => {
+    const preview = buildPeriodPreview({
+      totalCents: 10_000n,
+      unitCents: 1n,
+      method: 'BY_POINTS',
+      people: [
+        person('Ana', 'Salón', '8', { individualPoints: '1' }),
+        person('Beto', 'Salón', '8', { individualPoints: '0' }),
+        person('Caro', 'Salón', '8'),
+      ],
+    });
+    expect(preview.issues).toEqual([
+      {
+        code: 'NO_POINTS',
+        message: 'Beto, Caro no tiene puntos válidos: cargalos en Personal.',
+        employeeIds: ['Beto', 'Caro'],
+      },
+    ]);
+    expect(preview.canClose).toBe(false);
+  });
+
+  it('con BY_POINTS no hace falta la porción, pero sí un puesto (queda en el snapshot)', () => {
+    const withoutPortion = buildPeriodPreview({
+      totalCents: 10_000n,
+      unitCents: 1n,
+      method: 'BY_POINTS',
+      people: [person('Ana', 'Salón', '8', { factor: null, individualPoints: '1' })],
+    });
+    expect(withoutPortion.canClose).toBe(true);
+    const withoutPosition = buildPeriodPreview({
+      totalCents: 10_000n,
+      unitCents: 1n,
+      method: 'BY_POINTS',
+      people: [
+        person('Ana', 'Salón', '8', { individualPoints: '1' }),
+        person('Beto', 'Salón', '8', { positionId: null, factor: null, individualPoints: '1' }),
+      ],
+    });
+    expect(withoutPosition.issues.map((i) => i.code)).toEqual(['NO_POSITION']);
+    expect(withoutPosition.canClose).toBe(false);
+  });
+});
+
+describe('regresión: pozo único BY_POSITION = fórmula anterior', () => {
+  it('500 repartos aleatorios dan los mismos importes, adelantos y puntos', async () => {
+    const { computeProvisionalDistribution } = await import('./provisional-formula');
+    let state = 314159;
+    const next = (max: number) => {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+      return state % max;
+    };
+    const factors = ['0,014', '0,022', '0,007', '0,0145', '0,3', '1'];
+    const factorE4: Record<string, bigint> = {
+      '0,014': 140n,
+      '0,022': 220n,
+      '0,007': 70n,
+      '0,0145': 145n,
+      '0,3': 3000n,
+      '1': 10_000n,
+    };
+    for (let run = 0; run < 500; run += 1) {
+      const people = Array.from({ length: 1 + next(14) }, (_, i) => {
+        const factor = factors[next(factors.length)]!;
+        return {
+          ...person(`e${i}`, 'Salón', `${next(169)}${next(2) === 0 ? ',5' : ''}`),
+          factor,
+          advanceCents: next(3) === 0 ? BigInt(next(3_000_000)) : 0n,
+        };
+      }).map((p) => (p.hours === '168,5' ? { ...p, hours: '168' } : p));
+      const unitCents = next(2) === 0 ? 1n : 100n;
+      const totalCents = BigInt(1 + next(40_000_000)) * unitCents;
+      const preview = buildPeriodPreview({ totalCents, unitCents, people });
+      const worked = preview.rows.filter((r) => r.state === 'worked');
+      if (worked.length === 0) continue;
+      const old = computeProvisionalDistribution(
+        totalCents,
+        worked.map((r) => ({
+          id: r.employeeId,
+          hoursE2: r.hoursE2 ?? 0n,
+          factorE4: factorE4[r.factor ?? ''] ?? 0n,
+          advanceCents: people.find((p) => p.employeeId === r.employeeId)?.advanceCents ?? 0n,
+        })),
+        { unitCents },
+      );
+      expect(preview.totalPointsE6).toBe(old.totalPointsE6);
+      expect(
+        worked.map((r) => [
+          r.pointsE6,
+          r.percentE2,
+          r.amountCents,
+          r.advanceAppliedCents,
+          r.pendingAdvanceCents,
+          r.finalCents,
+        ]),
+      ).toEqual(
+        old.items.map((i) => [
+          i.pointsE6,
+          i.percentE2,
+          i.amountCents,
+          i.advanceAppliedCents,
+          i.pendingAdvanceCents,
+          i.finalCents,
+        ]),
+      );
+      expect(preview.totalAdvanceCents).toBe(old.totalAdvanceCents);
+      expect(preview.totalFinalCents).toBe(old.totalFinalCents);
+    }
+  });
+});

@@ -18,9 +18,15 @@ import {
   addStaffInput,
   firstIssue,
   setStaffActiveInput,
+  setStaffPointsInput,
   setStaffPositionInput,
 } from '@/server/staff/schemas';
-import { addEmployee, setEmployeeActive, setEmployeePosition } from '@/server/staff/service';
+import {
+  addEmployee,
+  setEmployeeActive,
+  setEmployeePoints,
+  setEmployeePosition,
+} from '@/server/staff/service';
 
 const DENIED: Record<AccessDenied['reason'], string> = {
   UNAUTHENTICATED: 'Tu sesión terminó. Volvé a iniciar sesión.',
@@ -72,5 +78,15 @@ export async function setStaffActiveAction(
 ): Promise<string | null> {
   return run(setStaffActiveInput, { employeeId, active }, (access, input) =>
     setEmployeeActive(getDb(), access, input),
+  );
+}
+
+/** Puntos individuales (1,20): dato de la persona, no crea versión de la política. */
+export async function setStaffPointsAction(
+  employeeId: string,
+  points: string,
+): Promise<string | null> {
+  return run(setStaffPointsInput, { employeeId, points }, (access, input) =>
+    setEmployeePoints(getDb(), access, input),
   );
 }

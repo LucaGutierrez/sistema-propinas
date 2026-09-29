@@ -4,6 +4,7 @@ import {
   addStaffInput,
   firstIssue,
   setStaffActiveInput,
+  setStaffPointsInput,
   setStaffPositionInput,
 } from './schemas';
 
@@ -55,6 +56,26 @@ describe('validación de "Personal"', () => {
     expect(setStaffActiveInput.parse({ employeeId: EMPLOYEE, active: false }).active).toBe(false);
     expect(setStaffActiveInput.safeParse({ employeeId: EMPLOYEE, active: 'no' }).success).toBe(
       false,
+    );
+  });
+});
+
+describe('puntos individuales', () => {
+  const employeeId = '00000000-0000-4000-8000-000000000001';
+  const parse = (points: string) => setStaffPointsInput.safeParse({ employeeId, points });
+
+  it('acepta números mayores que cero con hasta 2 decimales y los normaliza para la base', () => {
+    expect(parse('1,20')).toMatchObject({ success: true, data: { points: '1.20' } });
+    expect(parse(' 0.8 ')).toMatchObject({ success: true, data: { points: '0.80' } });
+    expect(parse('2')).toMatchObject({ success: true, data: { points: '2.00' } });
+  });
+
+  it('rechaza cero, negativos, texto, más de 2 decimales y lo que no entra en la base', () => {
+    for (const points of ['0', '0,00', '-1', 'abc', '', '1,234', '10000']) {
+      expect(parse(points).success).toBe(false);
+    }
+    expect(parse('0').error?.issues[0]?.message).toBe(
+      'Los puntos tienen que ser un número mayor que cero (hasta 2 decimales).',
     );
   });
 });

@@ -3,6 +3,7 @@
 import {
   addStaffAction,
   setStaffActiveAction,
+  setStaffPointsAction,
   setStaffPositionAction,
 } from '@/app/personal/actions';
 import type { StaffActions, StaffView as StaffViewModel } from '@/lib/staff/view';
@@ -12,6 +13,7 @@ const actions: StaffActions = {
   add: addStaffAction,
   setPosition: setStaffPositionAction,
   setActive: setStaffActiveAction,
+  setPoints: setStaffPointsAction,
 };
 
 /**

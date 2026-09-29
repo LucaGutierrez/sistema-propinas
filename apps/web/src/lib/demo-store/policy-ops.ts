@@ -16,7 +16,7 @@ import {
   planPortionChange,
   type PolicyChangePlan,
 } from '@/lib/policy/changes';
-import { type ParamKey } from './config';
+import { isDatabaseOnly, type ParamKey } from './config';
 import { MIN_REASON_LENGTH } from './envelopes';
 import { openWeek, type Outcome, type Position, type Venue, type Week } from './model';
 import { appendVersion, currentVersion, versionOf, type PolicyVersion } from './policy';
@@ -70,6 +70,11 @@ export function setConfigValue(
   by: string,
   at: string,
 ): Outcome {
+  if (isDatabaseOnly(key, value)) {
+    return fail(
+      'En la demo todavía no se puede calcular con esa opción (necesita la base de datos).',
+    );
+  }
   return changePolicy(venue, (current) => planConfigValue(current, key, value), by, at);
 }
 

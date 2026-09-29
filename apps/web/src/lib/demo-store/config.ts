@@ -13,7 +13,7 @@ export interface DistributionConfig {
   hoursEntry: 'TOTAL_AL_CERRAR' | 'POR_DIA';
   sources: 'UNA_FUENTE' | 'VARIAS_SUMADAS' | 'POZOS_SEPARADOS';
   groups: 'SIN_GRUPOS' | 'PORCENTAJE_POR_GRUPO';
-  weights: 'POR_PUESTO' | 'PUESTO_CON_EXCEPCIONES' | 'POR_PERSONA';
+  weights: 'POR_PUESTO' | 'POR_PUNTOS' | 'PUESTO_POR_PUNTOS' | 'PUESTO_CON_EXCEPCIONES';
   rounding: 'CENTAVO' | 'PESO' | 'DIEZ' | 'CIEN';
   advances: 'TODO_EL_PERIODO' | 'DESDE_SU_FECHA' | 'A_ELECCION';
   envelopes: 'SOLO_ENCARGADO' | 'ENCARGADO_Y_EDITOR' | 'ROL_PAGADOR';
@@ -27,6 +27,11 @@ export interface ParamOption {
   description: string;
   /** GUTIP ya calcula así. Las demás opciones se muestran pero no se pueden elegir todavía. */
   supported: boolean;
+  /**
+   * Solo con la base de datos: la demo del navegador no tiene el dato que la opción necesita
+   * (p. ej. los puntos individuales del personal), así que ahí no se puede elegir.
+   */
+  databaseOnly?: boolean;
 }
 
 export interface ParamDefinition {
@@ -80,7 +85,7 @@ export const PARAMS: readonly ParamDefinition[] = [
   {
     key: 'hoursBasis',
     label: 'Horas que se usan',
-    question: '¿Con qué horas se calculan los puntos?',
+    question: '¿Con qué horas se calcula el ponderado?',
     options: [
       {
         value: 'TOTAL_PERIODO',
@@ -159,14 +164,14 @@ export const PARAMS: readonly ParamDefinition[] = [
       {
         value: 'SIN_GRUPOS',
         label: 'Sin grupos',
-        description: 'Todos reparten el mismo pozo por puntos.',
+        description: 'Todos reparten el mismo pozo según su ponderado.',
         supported: true,
       },
       {
         value: 'PORCENTAJE_POR_GRUPO',
         label: 'Porcentaje por grupo',
         description:
-          'Cada grupo recibe un % y dentro del grupo se reparte por puntos. Hay que definir qué pasa si un grupo no trabajó.',
+          'Cada grupo recibe un % y dentro del grupo se reparte según el ponderado. Hay que definir qué pasa si un grupo no trabajó.',
         supported: false,
       },
     ],
@@ -175,25 +180,38 @@ export const PARAMS: readonly ParamDefinition[] = [
   },
   {
     key: 'weights',
-    label: 'Porción de cada hora',
-    question: '¿De qué depende cuánto vale una hora?',
+    label: 'Método de participación',
+    question:
+      '¿Cómo se calcula el ponderado de cada persona? Porción = factor del puesto · Puntos = puntos individuales de la persona (en Personal).',
     options: [
       {
         value: 'POR_PUESTO',
         label: 'Por puesto',
-        description: 'Cada puesto tiene una porción.',
+        description:
+          'Ponderado = horas × porción del puesto. Los puntos individuales no intervienen.',
         supported: true,
+      },
+      {
+        value: 'POR_PUNTOS',
+        label: 'Por puntos individuales',
+        description:
+          'Ponderado = horas × puntos de la persona. La porción del puesto no interviene.',
+        supported: true,
+        databaseOnly: true,
+      },
+      {
+        value: 'PUESTO_POR_PUNTOS',
+        label: 'Puesto × puntos',
+        description:
+          'Ponderado = horas × porción del puesto × puntos de la persona. Mismo puesto y horas con más puntos: cobra más.',
+        supported: true,
+        databaseOnly: true,
       },
       {
         value: 'PUESTO_CON_EXCEPCIONES',
         label: 'Por puesto, con excepciones',
-        description: 'Porción del puesto, con un valor propio para algunas personas.',
-        supported: false,
-      },
-      {
-        value: 'POR_PERSONA',
-        label: 'Por persona',
-        description: 'Cada persona tiene su porción.',
+        description:
+          'Porción del puesto, con una porción propia (reemplazo) para algunas personas.',
         supported: false,
       },
     ],
@@ -313,6 +331,11 @@ export function optionLabel(key: ParamKey, value: string): string {
   return paramDefinition(key).options.find((o) => o.value === value)?.label ?? value;
 }
 
+/** La opción solo se puede elegir con la base de datos (la demo no tiene su dato). */
+export function isDatabaseOnly(key: ParamKey, value: string): boolean {
+  return paramDefinition(key).options.some((o) => o.value === value && o.databaseOnly === true);
+}
+
 export function isSupported(key: ParamKey, value: string): boolean {
   return paramDefinition(key).options.some((o) => o.value === value && o.supported);
 }
@@ -324,7 +347,8 @@ export function normalizeValues(value: unknown): DistributionConfig {
   const raw = value as Partial<Record<ParamKey, unknown>>;
   for (const param of PARAMS) {
     const v = raw[param.key];
-    if (typeof v === 'string' && isSupported(param.key, v)) {
+    // La demo solo guarda opciones que puede calcular en el navegador.
+    if (typeof v === 'string' && isSupported(param.key, v) && !isDatabaseOnly(param.key, v)) {
       (values as Record<ParamKey, string>)[param.key] = v;
     }
   }

@@ -7,13 +7,15 @@
  * solo llegan los datos del cambio; nunca el restaurante, el usuario ni el rol.
  */
 import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 import { PARAMS, type ParamKey } from '@/lib/demo-store/config';
+import { PORTION_DISPLAYS } from '@/lib/policy/portion-format';
 import { AccessDenied } from '@/server/access/access';
 import { requireAccess } from '@/server/access/request';
 import { CAN } from '@/server/access/roles';
 import { databaseEnabled } from '@/server/context';
 import { getDb } from '@/server/db';
-import { changeDistributionConfig } from '@/server/policy/commands';
+import { changeDistributionConfig, changePortionDisplay } from '@/server/policy/commands';
 import type { PolicyChangeRequest } from '@/server/policy/service';
 
 const DENIED: Record<AccessDenied['reason'], string> = {
@@ -21,6 +23,27 @@ const DENIED: Record<AccessDenied['reason'], string> = {
   NOT_FOUND: 'No se encontró el restaurante.',
   FORBIDDEN: 'Tu rol no permite cambiar la configuración.',
 };
+
+const portionDisplayInput = z.enum(PORTION_DISPLAYS, { error: 'Ese formato no existe.' });
+
+/** Formato de la porción (decimal / porcentaje): no crea versión de la política. */
+export async function setPortionDisplayAction(display: string): Promise<string | null> {
+  if (!databaseEnabled()) return 'La base de datos no está activada en este servidor.';
+  const parsed = portionDisplayInput.safeParse(display);
+  if (!parsed.success) return parsed.error.issues[0]?.message ?? 'Ese formato no existe.';
+  try {
+    const access = await requireAccess({ roles: CAN.editDistributionConfig });
+    const result = await changePortionDisplay(getDb(), access, parsed.data);
+    if (!result.ok) return result.error;
+    // Las porciones se muestran en Configuración, Personal, Reparto e Historial.
+    revalidatePath('/', 'layout');
+    return null;
+  } catch (error) {
+    if (error instanceof AccessDenied) return DENIED[error.reason];
+    console.error('[configuracion] no se pudo cambiar el formato de la porción', error);
+    return 'No se pudo guardar el cambio. Probá de nuevo.';
+  }
+}
 
 async function run(request: PolicyChangeRequest): Promise<string | null> {
   if (!databaseEnabled()) return 'La base de datos no está activada en este servidor.';

@@ -2,41 +2,58 @@
 
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { useState } from 'react';
-import { formatMoney, formatScaled } from '@/lib/decimal';
-import { formatHoursE2 } from '@/lib/distribution/period-view';
+import { formatMoney } from '@/lib/decimal';
+import { WEIGHT_SCALE, type ParticipationMethod } from '@/lib/distribution/participation';
+import { formatHoursE2, formatWeight, weightInputsText } from '@/lib/distribution/period-view';
+import type { PortionDisplay } from '@/lib/policy/portion-format';
 
 export interface DetailRow {
   employeeId: string;
   name: string;
   positionName: string;
   hoursE2: bigint;
-  factor: string;
-  pointsE6: bigint;
+  /** Porción del puesto (null si el método no la usa). */
+  factor: string | null;
+  /** Puntos individuales (null si el método no los usa). */
+  individualPoints: string | null;
+  /** Ponderado (E8). */
+  weightE8: bigint;
   amountCents: bigint;
   advanceCents: bigint;
   finalCents: bigint;
 }
 
-const points = (e6: bigint) => formatScaled(e6, 6, 3);
+const EXPLANATION: Record<ParticipationMethod, string> = {
+  BY_POSITION: 'horas × porción del puesto',
+  BY_POINTS: 'horas × puntos de la persona',
+  BY_POSITION_TIMES_POINTS: 'horas × porción del puesto × puntos de la persona',
+};
 
 /**
- * "¿Cómo se calculó?": la cuenta de cada persona, plegada por defecto. Primero la explicación
- * simple (cuánto vale una hora de cada puesto) y después el detalle con porción y puntos.
+ * "¿Cómo se calculó?": la cuenta de cada persona, plegada por defecto. Primero la regla del método
+ * de participación y después, por persona, horas × porción y/o puntos = ponderado → importe.
  */
 export function CalculationDetail({
   rows,
   totalCents,
-  totalPointsE6,
+  totalWeightE8,
   roundingLabel,
+  method,
+  portionDisplay,
 }: {
   rows: readonly DetailRow[];
   totalCents: bigint;
-  totalPointsE6: bigint;
+  totalWeightE8: bigint;
   roundingLabel: string;
+  method: ParticipationMethod;
+  portionDisplay: PortionDisplay;
 }) {
   const [open, setOpen] = useState(false);
-  if (rows.length === 0 || totalPointsE6 === 0n) return null;
-  const pointValue = (totalCents * 1_000_000n * 2n + totalPointsE6) / (totalPointsE6 * 2n);
+  if (rows.length === 0 || totalWeightE8 === 0n) return null;
+  const one = 10n ** BigInt(WEIGHT_SCALE);
+  const unitValue = (totalCents * one * 2n + totalWeightE8) / (totalWeightE8 * 2n);
+  const inputs = (row: DetailRow) =>
+    weightInputsText({ ...row, hours: formatHoursE2(row.hoursE2) }, portionDisplay);
   return (
     <div className="rounded-xl border bg-card">
       <button
@@ -51,9 +68,9 @@ export function CalculationDetail({
       {open ? (
         <div className="space-y-4 border-t px-4 py-4 text-sm">
           <p className="text-muted-foreground">
-            Cada hora trabajada suma <strong className="text-foreground">puntos</strong> según la{' '}
-            <strong className="text-foreground">porción</strong> de su puesto (horas × porción). La
-            propina se reparte en proporción a los puntos de cada persona y se redondea a{' '}
+            El <strong className="text-foreground">ponderado</strong> de cada persona es{' '}
+            {EXPLANATION[method]}. La propina se reparte en proporción al ponderado de cada persona
+            (su <strong className="text-foreground">participación</strong>) y se redondea a{' '}
             {roundingLabel} de forma que la suma dé exacto el total.
           </p>
           <dl className="grid grid-cols-1 gap-2 rounded-lg bg-muted/50 p-3 sm:grid-cols-3">
@@ -62,12 +79,12 @@ export function CalculationDetail({
               <dd className="tabular font-medium">{formatMoney(totalCents)}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground">Total de puntos</dt>
-              <dd className="tabular font-medium">{points(totalPointsE6)}</dd>
+              <dt className="text-xs text-muted-foreground">Ponderado total</dt>
+              <dd className="tabular font-medium">{formatWeight(totalWeightE8)}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground">Valor de 1 punto</dt>
-              <dd className="tabular font-medium">{formatMoney(pointValue)}</dd>
+              <dt className="text-xs text-muted-foreground">Valor de 1 de ponderado</dt>
+              <dd className="tabular font-medium">{formatMoney(unitValue)}</dd>
             </div>
           </dl>
           <ul className="divide-y">
@@ -78,8 +95,8 @@ export function CalculationDetail({
                   <span className="font-normal text-muted-foreground">· {row.positionName}</span>
                 </p>
                 <p className="tabular text-muted-foreground">
-                  {formatHoursE2(row.hoursE2)} h × {row.factor} de porción = {points(row.pointsE6)}{' '}
-                  puntos → {points(row.pointsE6)} × {formatMoney(pointValue)} ≈{' '}
+                  {inputs(row)} = {formatWeight(row.weightE8)} de ponderado →{' '}
+                  {formatWeight(row.weightE8)} × {formatMoney(unitValue)} ≈{' '}
                   <span className="text-foreground">{formatMoney(row.amountCents)}</span>
                   {row.advanceCents > 0n ? (
                     <>

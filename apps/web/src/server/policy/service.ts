@@ -23,6 +23,7 @@ import {
   type PolicyDraft,
 } from '@/lib/policy/changes';
 import { portionToDb, valuesToColumns } from '@/lib/policy/db-mapping';
+import type { PortionDisplay } from '@/lib/policy/portion-format';
 import { STANDARD_TEMPLATE, type PolicyTemplate } from '@/lib/policy/standard';
 import { getPolicyVersion, type DbClient, type PolicyVersionRecord } from './repository';
 
@@ -219,6 +220,41 @@ export function changePolicy(
   request: PolicyChangeRequest,
 ): Promise<ServiceResult<PolicyChangeResult>> {
   return db.$transaction((tx) => changePolicyInTx(tx, actor, request), TX_OPTIONS);
+}
+
+/**
+ * Cambia cómo se MUESTRAN las porciones del restaurante (decimal o porcentaje). NO crea versión:
+ * es presentación; la porción guardada y el cálculo no cambian. Queda en la bitácora.
+ */
+export async function setPortionDisplay(
+  db: PrismaClient,
+  actor: Actor,
+  display: PortionDisplay,
+): Promise<ServiceResult<{ portionDisplay: PortionDisplay; changed: boolean }>> {
+  return db.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ portion_display: PortionDisplay }[]>`
+      SELECT portion_display::text AS portion_display
+      FROM restaurants WHERE id = ${actor.restaurantId}::uuid FOR UPDATE`;
+    const current = rows[0]?.portion_display;
+    if (!current) return fail('El restaurante no existe.');
+    if (current === display)
+      return { ok: true, value: { portionDisplay: display, changed: false } };
+    await tx.restaurant.update({
+      where: { id: actor.restaurantId },
+      data: { portionDisplay: display },
+    });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: actor.restaurantId,
+        userId: actor.userId,
+        action: 'restaurant.portion_display_changed',
+        entity: 'restaurants',
+        entityId: actor.restaurantId,
+        payload: { from: current, to: display },
+      },
+    });
+    return { ok: true, value: { portionDisplay: display, changed: true } };
+  }, TX_OPTIONS);
 }
 
 /** Renombra un puesto. NO crea versión: el nombre es del puesto, no de la política. */

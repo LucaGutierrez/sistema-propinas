@@ -220,6 +220,9 @@ describe('historial: detalle', () => {
         positionName: 'Salón',
         hours: '30',
         factor: '0,022',
+        // BY_POSITION: los puntos individuales no intervinieron (null en el snapshot).
+        individualPoints: null,
+        weightE8: '66000000',
         pointsE6: '660000',
         percentE2: '7500',
         grossCents: '7500000',
@@ -233,6 +236,8 @@ describe('historial: detalle', () => {
         positionName: 'Barra',
         hours: '10',
         factor: '0,022',
+        individualPoints: null,
+        weightE8: '22000000',
         pointsE6: '220000',
         percentE2: '2500',
         grossCents: '2500000',

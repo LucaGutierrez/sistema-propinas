@@ -105,6 +105,14 @@ describe('versiones de la política', () => {
     expect(err(setConfigValue(venue, 'rounding', 'CENTAVO', BY, AT))).toMatch(/ya es/);
   });
 
+  it('los métodos con puntos individuales solo se eligen con la base (la demo no tiene puntos)', () => {
+    const venue = seedVenue(AT);
+    expect(err(setConfigValue(venue, 'weights', 'POR_PUNTOS', BY, AT))).toMatch(/base de datos/);
+    expect(err(setConfigValue(venue, 'weights', 'PUESTO_POR_PUNTOS', BY, AT))).toMatch(
+      /base de datos/,
+    );
+  });
+
   it('puestos y porciones son parte de la política: agregar o cambiar crea versión', () => {
     let v = ok(
       addPosition(seedVenue(AT), { id: 'cocina', name: 'Cocina', factor: '0.015' }, BY, AT),

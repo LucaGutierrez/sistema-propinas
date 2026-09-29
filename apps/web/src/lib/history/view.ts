@@ -3,6 +3,8 @@
  * guardado al cerrar cada reparto (ítems, sobres, eventos, adelantos); nada se recalcula ni se
  * reconstruye con la configuración actual. Importes como texto de centavos.
  */
+import type { ParticipationMethod } from '@/lib/distribution/participation';
+import type { PortionDisplay } from '@/lib/policy/portion-format';
 import type { EnvelopeEventType, EnvelopeStatus } from '@/lib/envelopes/view';
 
 export type HistoryStatus = 'CLOSED' | 'VOIDED';
@@ -45,7 +47,13 @@ export interface HistoryPersonRow {
   name: string;
   positionName: string;
   hours: string;
-  factor: string;
+  /** Porción usada (snapshot); null si el método no la usó o no hay detalle. */
+  factor: string | null;
+  /** Puntos individuales usados (snapshot); null si el método no los usó o no hay detalle. */
+  individualPoints: string | null;
+  /** Ponderado exacto (E8, snapshot); vacío si no hay detalle. */
+  weightE8: string;
+  /** Ponderado en la escala anterior (E6, redondeado); se conserva por compatibilidad. */
   pointsE6: string;
   percentE2: string;
   grossCents: string;
@@ -101,6 +109,10 @@ export interface HistoryDetail {
   /** Número de versión y redondeo de la política USADA (del snapshot del cierre). */
   policyNumber: number | null;
   roundingUnit: 'CENT' | 'PESO' | null;
+  /** Método de participación con el que se calculó. */
+  method: ParticipationMethod;
+  /** Cómo se muestran las porciones (preferencia actual: solo presentación). */
+  portionDisplay: PortionDisplay;
   calcVersion: string | null;
   /** Totales del reparto (null para SELF: no se revelan). */
   totals: {
@@ -108,6 +120,8 @@ export interface HistoryDetail {
     advancesCents: string;
     finalCents: string;
     pointsE6: string;
+    /** Σ ponderado exacto (E8). */
+    weightE8: string;
     participants: number;
   } | null;
   /** El detalle por persona está disponible (en un reparto anulado puede faltar). */

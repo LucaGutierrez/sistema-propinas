@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { STANDARD_VALUES } from '@/lib/demo-store/config';
 import { standardPolicy } from '@/lib/demo-store/policy';
 import { planAddPosition, planConfigValue, planPortionChange, type PolicyDraft } from './changes';
-import { columnsToValues, portionFromDb, portionToDb, valuesToColumns } from './db-mapping';
+import {
+  columnsToValues,
+  participationMethodOf,
+  portionFromDb,
+  portionToDb,
+  valuesToColumns,
+} from './db-mapping';
 import { STANDARD_TEMPLATE } from './standard';
 
 const standard = (): PolicyDraft => {
@@ -106,6 +112,35 @@ describe('traducción a la base', () => {
       periodStartWeekday: 4,
     });
     expect(columnsToValues(columns)).toEqual(values);
+  });
+
+  it('los tres métodos de participación van y vuelven con su valor en la base', () => {
+    for (const [weights, portionMode] of [
+      ['POR_PUESTO', 'BY_POSITION'],
+      ['POR_PUNTOS', 'BY_POINTS'],
+      ['PUESTO_POR_PUNTOS', 'BY_POSITION_TIMES_POINTS'],
+    ] as const) {
+      const values = { ...STANDARD_VALUES, weights };
+      const columns = valuesToColumns(values, 1);
+      expect(columns.portionMode).toBe(portionMode);
+      expect(participationMethodOf(columns.portionMode)).toBe(portionMode);
+      expect(columnsToValues(columns)).toEqual(values);
+    }
+    expect(() =>
+      valuesToColumns({ ...STANDARD_VALUES, weights: 'PUESTO_CON_EXCEPCIONES' }, 1),
+    ).toThrow(/todavía no se puede guardar/);
+  });
+
+  it('cambiar el método de participación crea una versión con su resumen', () => {
+    const plan = planConfigValue(
+      { values: STANDARD_VALUES, positions: [] },
+      'weights',
+      'PUESTO_POR_PUNTOS',
+    );
+    expect(plan).toMatchObject({
+      ok: true,
+      summary: 'Método de participación: Por puesto → Puesto × puntos',
+    });
   });
 
   it('una opción "próximamente" no se puede guardar', () => {

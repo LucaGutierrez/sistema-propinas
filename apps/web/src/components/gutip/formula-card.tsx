@@ -4,9 +4,9 @@ import { cn } from '@/lib/utils';
 
 const STEPS = [
   ['Pozo', 'suma de los pozos de cada día de la semana'],
-  ['Puntos', 'horas de la semana × porción del puesto'],
-  ['Porcentaje', 'puntos ÷ total de puntos'],
-  ['Importe', 'pozo × porcentaje'],
+  ['Ponderado', 'horas × porción del puesto y/o puntos de la persona (según el método)'],
+  ['Participación', 'ponderado ÷ ponderado total'],
+  ['Importe', 'pozo × participación'],
   ['Sobre', 'importe − adelantos'],
 ] as const;
 

@@ -128,7 +128,7 @@ function toRecord(row: VersionRow): PolicyVersionRecord {
 export async function getRestaurant(db: DbClient, restaurantId: string) {
   return db.restaurant.findUnique({
     where: { id: restaurantId },
-    select: { id: true, name: true, currentPolicyVersionId: true },
+    select: { id: true, name: true, currentPolicyVersionId: true, portionDisplay: true },
   });
 }
 
@@ -236,6 +236,7 @@ export async function getDistributionConfigView(
     current,
     versions: views,
     peopleByPosition,
+    portionDisplay: restaurant.portionDisplay,
     canEdit: access.canConfigure,
   };
 }

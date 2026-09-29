@@ -24,8 +24,9 @@ CIERRE    → congela todo en un snapshot       (inmutable)
 
 | | Qué es | Ejemplos | ¿Crea versión de política? |
 |---|---|---|---|
-| **Configuración fija** (política) | Lo propio del restaurante, se define una vez | período, cómo se reparte, horas usadas, fuentes y su destino, estructura del pozo y grupos con %, **puestos con su peso**, excepciones de peso por persona, redondeo y sobrante, adelantos, quién maneja sobres | **Sí**, cada cambio |
-| **Personal** | Las personas y su estado actual | agregar, dar de baja, cambiar el puesto habitual | No |
+| **Configuración fija** (política) | Lo propio del restaurante, se define una vez | período, cómo se reparte, horas usadas, fuentes y su destino, estructura del pozo y grupos con %, **método de participación**, **puestos con su porción**, excepciones de porción por persona (futuro), redondeo y sobrante, adelantos, quién maneja sobres | **Sí**, cada cambio |
+| **Personal** | Las personas y su estado actual | agregar, dar de baja, cambiar el puesto habitual, **puntos individuales** (M1) | No (los puntos quedan en `audit_log` y cada cierre congela los que usó) |
+| **Preferencias de presentación** | Cómo se ven los datos | formato de la porción: decimal (0,022) o porcentaje (2,2 %) | No (no cambia ningún número) |
 | **Datos del período** | Lo que cambia en cada período | monto de cada fuente por día, horas de cada persona, adelantos, cotización del dólar, decisiones manuales que pida la política | No |
 | **Valores calculados** | Lo que calcula GUTIP | puntos, porcentaje, pozo de cada grupo, importe, ajuste de redondeo, adelanto aplicado, saldo, sobre final, totales | — (se recalculan; se guardan al cerrar) |
 
@@ -53,7 +54,8 @@ Es la modalidad que GUTIP implementa hoy (no una regla universal):
 | Horas | total del período, cargado al cerrar |
 | Fuentes | un monto por día (pozo general) |
 | Pozo | pozo único |
-| Pesos | por puesto |
+| Método de participación | por puesto (horas × porción) |
+| Formato de la porción | decimal (preferencia del restaurante, no de la política) |
 | Puestos iniciales | Supervisor 0,014 · Barra 0,022 · Salón 0,022 · Bacha 0,007 |
 | Redondeo | centavo, mayor resto (sin sobrante posible) |
 | Adelantos | se descuentan de todo el período; lo que no alcanza pasa al siguiente |
@@ -70,7 +72,7 @@ Es la modalidad que GUTIP implementa hoy (no una regla universal):
 | Fuentes del pozo | **estructura** | lista de fuentes (nombre, tipo, moneda, destino: pozo general o de un grupo); hoy: un monto por día ✅ | destino "grupo" exige grupos |
 | Estructura del pozo | enum + **estructura** | pozo único ✅ · % por grupo (grupos con %, que sumen 100 %, y política para un grupo vacío) | — |
 | Grupo vacío | enum | repartir entre los demás · guardar para el próximo período · decidir a mano | solo con % por grupo |
-| Peso de cada hora | enum + **estructura** | por puesto ✅ · por puesto con excepciones · por persona; tabla de puestos con peso; excepciones por persona | "por persona" exige peso para cada activo |
+| Método de participación | enum + **estructura** | por puesto ✅ (horas × porción) · por puntos individuales ✅ (horas × puntos) · puesto × puntos ✅ (horas × porción × puntos) · por puesto con excepciones (reemplazo de la porción; futuro); tabla de puestos con porción | los puntos son de cada persona (Personal, 1,00 por defecto), NO de la política: no crean versión y el cierre congela los usados. Los métodos con puntos solo se eligen con la base (la demo no tiene puntos) |
 | Redondeo | enum | centavo ✅ · peso ✅ · $10 · $100; método: mayor resto ✅ | unidad > centavo con pozo no múltiplo exige política de sobrante |
 | Sobrante del redondeo | enum | no hay (el pozo debe ser múltiplo de la unidad) ✅ · pasa al período siguiente · a un fondo · decidir a mano | solo con unidad > centavo |
 | Descuento de adelantos | enum | de todo el período ✅ · desde su fecha · a elección / en cuotas | "desde su fecha" exige reparto por día |

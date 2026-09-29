@@ -4,6 +4,8 @@
  * `BigInt()` en el navegador, así el cálculo en vivo usa la misma aritmética exacta.
  */
 import { formatScaled, parseDecimal } from '@/lib/decimal';
+import { formatPortion, type PortionDisplay } from '@/lib/policy/portion-format';
+import { WEIGHT_SCALE, type ParticipationMethod } from './participation';
 import { HOURS_SCALE } from './provisional-formula';
 
 /** Nota de la propina cargada como total del período (una sola fila en `tip_entries`). */
@@ -17,6 +19,8 @@ export interface PeriodPersonView {
   positionId: string | null;
   positionName: string | null;
   factor: string | null;
+  /** Puntos individuales actuales de la persona ("1,20"). */
+  individualPoints: string | null;
   /** Horas cargadas ("45", "7,5"); null = sin cargar. */
   hours: string | null;
   /** Adelantos pendientes que se descuentan en este reparto (centavos). */
@@ -44,6 +48,10 @@ export interface OpenPeriodView {
   weekEnd: string;
   policyVersion: number;
   roundingUnit: 'CENT' | 'PESO';
+  /** Método de participación de la versión del período. */
+  method: ParticipationMethod;
+  /** Cómo se muestran las porciones (preferencia del restaurante). */
+  portionDisplay: PortionDisplay;
   /** 1 (centavos) o 100 (pesos enteros). */
   unitCents: string;
   tips: {
@@ -62,7 +70,13 @@ export interface ClosedPeriodRow {
   name: string;
   positionName: string;
   hours: string;
-  factor: string;
+  /** Porción usada (del snapshot); null si el método no la usó. */
+  factor: string | null;
+  /** Puntos individuales usados (del snapshot); null si el método no los usó. */
+  individualPoints: string | null;
+  /** Ponderado exacto (E8) del snapshot. */
+  weightE8: string;
+  /** Ponderado en la escala anterior (E6, redondeado): se conserva por compatibilidad. */
   pointsE6: string;
   percentE2: string;
   amountCents: string;
@@ -80,10 +94,15 @@ export interface ClosedPeriodView {
   closedByName: string | null;
   policyVersion: number;
   roundingUnit: 'CENT' | 'PESO';
+  /** Método de participación con el que se calculó (la versión no cambia nunca). */
+  method: ParticipationMethod;
+  portionDisplay: PortionDisplay;
   totalCents: string;
   totalAdvancesCents: string;
   totalFinalCents: string;
   totalPointsE6: string;
+  /** Σ ponderado exacto (E8). */
+  totalWeightE8: string;
   totalHours: string;
   tipsByDay: { date: string; amountCents: string }[];
   tipsMode: TipsMode;
@@ -115,4 +134,33 @@ export function hoursText(dbValue: string): string {
 /** Centésimas de hora → "45" / "7,5" / "301". */
 export function formatHoursE2(hoursE2: bigint): string {
   return formatScaled(hoursE2, HOURS_SCALE, HOURS_SCALE).replace(/,?0+$/, '').replace(/,$/, '');
+}
+
+/** Nombre de cada método de participación, con su cuenta. */
+export const METHOD_LABEL: Record<ParticipationMethod, string> = {
+  BY_POSITION: 'Por puesto (horas × porción)',
+  BY_POINTS: 'Por puntos individuales (horas × puntos)',
+  BY_POSITION_TIMES_POINTS: 'Puesto × puntos (horas × porción × puntos)',
+};
+
+/**
+ * Lo que entra en el ponderado de una persona: "40 h × 2,2 % de porción × 1,20 puntos". La porción
+ * y los puntos van solo si el método los usó (null = no intervinieron).
+ */
+export function weightInputsText(
+  row: { hours: string; factor: string | null; individualPoints: string | null },
+  display: PortionDisplay,
+): string {
+  return [
+    `${row.hours} h`,
+    row.factor !== null ? `${formatPortion(row.factor, display)} de porción` : null,
+    row.individualPoints !== null ? `${row.individualPoints} puntos` : null,
+  ]
+    .filter((part) => part !== null)
+    .join(' × ');
+}
+
+/** Ponderado (E8) → "0,63" / "48" / "1,056" (hasta 4 decimales, sin ceros de más). */
+export function formatWeight(weightE8: bigint): string {
+  return formatScaled(weightE8, WEIGHT_SCALE, 4).replace(/,?0+$/, '').replace(/,$/, '');
 }

@@ -85,7 +85,8 @@ Todo queda en `weekly_payment_events` (bitácora inmutable) y en `audit_log`: qu
 | Cómo se cargan las horas | total al cerrar · por día | Total al cerrar — *confirmado* |
 | Fuentes del pozo | efectivo, tarjeta, recepción, cocina… (sumadas o separadas) | Efectivo; Recepción y Cocina — *pendiente* |
 | Grupos y porcentajes | sin grupos · % por grupo (+ qué pasa si un grupo no trabajó) | Sin grupos según la planilla — *sin confirmar* |
-| Peso de cada hora | por puesto · por puesto con excepción por persona · por persona; escala del valor | Por puesto con excepciones en Bacha según la planilla — *sin confirmar* |
+| Método de participación (peso de cada hora) | por puesto (horas × porción) ✅ · por puntos individuales (horas × puntos) ✅ · puesto × puntos ✅ (M1, 2026-09-29) · por puesto con excepción (reemplazo) por persona | Por puesto con excepciones en Bacha según la planilla — *sin confirmar* |
+| Formato de la porción | decimal (0,022) · porcentaje (2,2 %) — solo presentación, no es parte de la política | — |
 | Redondeo | centavo · peso · $10 · $100; destino del sobrante | Pesos enteros según la planilla — *sin confirmar* |
 | Descuento de adelantos | todo el período · desde su fecha · a elección / en cuotas | *pendiente* |
 | Adelanto que no alcanza a descontarse | pasa como saldo al período siguiente · otras políticas a definir con casos reales | Pasa al período siguiente (decisión de la Fase 0) — *pendiente de confirmar*; **no es regla estructural** (2026-09-26) |
@@ -216,7 +217,8 @@ sistema-propinas/
 ## 6. Modelo de datos (resumen; detalle en `DATABASE.md`)
 
 - **Acceso:** `users`, `restaurants`, `memberships` (rol).
-- **Catálogos:** `teams`, `positions` (identidad estable del puesto; equipo opcional), `employees` (no versionados), `exchange_rates`.
+- **Catálogos:** `teams`, `positions` (identidad estable del puesto; equipo opcional), `employees` (no versionados; con sus **puntos individuales**, 1,00 por defecto), `exchange_rates`. `restaurants.portion_display` (decimal/porcentaje) es solo presentación.
+- **Participación (M1, 2026-09-29):** porción = factor del puesto (versionada, en la política) · puntos = de cada persona (no versionados, auditados) · ponderado = horas × porción y/o puntos según `portion_mode` (BY_POSITION, BY_POINTS, BY_POSITION_TIMES_POINTS). Una sola función de peso (`lib/distribution/participation.ts`, pura, entera); el cierre congela en cada ítem la porción y los puntos que usó. Con BY_POSITION los importes son idénticos a los de antes (probado).
 - **Política versionada:** `distribution_policy_versions` (parámetros tipados, solo inserción), `policy_version_positions` (porción de cada puesto, `NUMERIC(20,10)`); `restaurants.current_policy_version_id` es la vigente.
 - **Distribución:** `daily_distributions` (`DRAFT|CLOSED|VOIDED`, alcance `DAY` o `PERIOD` con `date_from`/`date_to`, sin superposición garantizada por una restricción de exclusión incluso ante concurrencia, totales ARS/USD), `tip_entries` (fecha de la propina, ARS/USD + cotización usada), `daily_distribution_items` (empleado, puesto, porción, horas, puntos, %, bruto, adelantos, final; todo en *snapshot*).
 - **Adelantos:** `advances` (con saldo pendiente y datos de anulación) + `advance_applications`.

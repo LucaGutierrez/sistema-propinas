@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: 2026-09-27 (Fase 2 cerrada: Better Auth + acceso real con `requireAccess`; migración `20260928000000_auth` aplicada en Neon production; login real del OWNER verificado contra production. Pendiente: despliegue.)
+Última actualización: 2026-09-29 (M1: métodos de participación, puntos individuales y formato de la porción; migración `20260929000000_participation_methods` creada y probada en local, **NO aplicada en Neon**. Antes: Fase 2 cerrada, Better Auth en production. Pendiente: despliegue y M1 en Neon con autorización.)
 Repositorio: https://github.com/LucaGutierrez/sistema-propinas (rama principal `main`; el trabajo en curso se revisa en ramas antes de integrarlo). Commit inicial: `d3ac4d83bd736451445737a7533b1be66660a381`.
 
 Documentos de referencia: [ARCHITECTURE.md](ARCHITECTURE.md) (arquitectura, flujo y decisiones) · [DATABASE.md](DATABASE.md) (modelo de datos) · [CONFIG-MODEL.md](CONFIG-MODEL.md) (política de distribución por restaurante) · [README.md](README.md) (comandos).
@@ -198,6 +198,19 @@ Pasa a la base el modelo aprobado en [CONFIG-MODEL.md](CONFIG-MODEL.md) y ya imp
 - **Rehacer** (reparto anulado, Dueño/Encargado): período nuevo de la misma semana con `revision + 1`, `supersedes_settlement_id` y la **misma versión de la política** que el anulado; propina, horas y cierre se cargan de nuevo; al cerrar, cada sobre nuevo apunta al anulado (`supersedes_payment_id`) y los adelantos se aplican con aplicaciones nuevas. Idempotente; no se puede con otro reparto abierto. "Empezar" esa semana también la rehace (y lo bloquea para el Editor).
 - **Concurrencia:** bloqueos en el orden de Sobres (período → sobres → adelantos por id): dos anulaciones a la vez dejan un solo evento; anular vs entregar nunca deja un período anulado con un sobre entregado (tests).
 
+### 6.11 Motor de participación puro (Fase 1 del modelo de participación, 2026-09-29; sin migraciones)
+
+- `lib/distribution/participation.ts` (puro, enteros): `participationWeight` (UNA función para los tres métodos: ponderado = horas E2 × porción E4 × puntos E2 = E8; el factor que el método no usa vale 1), `computePool` (mayor resto en la unidad de redondeo), `applyAdvances` (adelanto por persona, una vez, sobre el bruto total) y `spreadAdvances` (reparte ese descuento entre los ítems de la persona en orden).
+- `buildPeriodPreview` (pozo único) usa ese motor; con BY_POSITION da exactamente los importes, porcentajes, adelantos y puntos de `computeProvisionalDistribution` (propiedad sobre 500 + 500 repartos aleatorios y los 12 importes de Library). `shift-preview.ts` (pozos por día y turno) está listo como función pura, **sin uso** hasta M3.
+
+### 6.12 M1: métodos de participación, puntos individuales y formato de la porción (2026-09-29; migración creada, NO aplicada en Neon)
+
+- **Modelo:** porción = factor del puesto (política, versionada) · puntos = de cada persona (`employees.individual_points`, 1,00 por defecto, > 0; NO versionados; `audit_log` `employee.points_changed`) · ponderado = según `portion_mode` (BY_POSITION horas × porción · BY_POINTS horas × puntos · BY_POSITION_TIMES_POINTS horas × porción × puntos) · formato de la porción = `restaurants.portion_display` (DECIMAL/PERCENT), solo presentación: no crea versión (`audit_log` `restaurant.portion_display_changed`).
+- **Base:** migración `20260929000000_participation_methods` (aditiva; ver `DATABASE.md` rev. 7 y §10) + `sql/0004_participation.sql`. Lo existente queda en BY_POSITION, DECIMAL y 1,00 punto; los ítems cerrados no cambian.
+- **Cierre:** guarda en cada ítem la porción usada (NULL con BY_POINTS), los puntos usados (NULL con BY_POSITION) y el ponderado exacto (8 decimales); `policy_snapshot` suma `portionMode` y `portionDisplay` (auditoría). `calc_version`: `provisional-1` con BY_POSITION (idéntico al anterior) y `provisional-2` con puntos.
+- **Pantallas:** Configuración (método de participación; "Mostrar la porción como" decimal/porcentaje; porciones que se escriben en el formato elegido y se guardan siempre como fracción), Personal (Porción vs. Puntos explicados, puntos editables por Dueño/Encargado), Reparto (método visible, puntos por persona si el método los usa, "¿Cómo se calculó?" con el ponderado del método), Historial y detalle de un reparto cerrado (del snapshot). En la UI, "Ponderado" es horas × porción/puntos, "Participación" es el % y "Puntos" son solo los individuales. La demo del navegador no tiene puntos: ahí esos métodos aparecen como "Solo con la base de datos".
+- **Pruebas:** web 213, tip-engine 257 (+3 todo), `test:db` 286 (nuevo `participation.test.ts` y la migración M1 aplicada sobre una base con un reparto cerrado), `test:pg` 183 (nuevo `participation.test.ts`: 28 casos — restaurantes existentes, BY_POSITION idéntico, BY_POINTS, puesto × puntos, formato sin versión, puntos inválidos, cambios después del cierre, sobres, aislamiento, permisos y cierre concurrente con un cambio de puntos). Verificado además en el navegador contra un PostgreSQL local descartable (configurar método y formato, porción escrita en %, puntos, reparto, cierre, historial y sobres).
+
 ## 7. Qué falta de la Fase 0
 
 Todo lo construible sin recursos externos está hecho. Faltan verificaciones que dependen de cosas externas:
@@ -287,9 +300,9 @@ pnpm --filter @propinas/web build
 
 ## NEXT STEP
 
-**Cuando retomemos: Fase 1 y Fase 2 cerradas. Neon production tiene las 3 migraciones, el restaurante real con su OWNER (con credencial de Better Auth) y la política v1/v2; el login real contra production se verificó desde la app local. La app todavía no está desplegada.**
+**Cuando retomemos: M1 (participación) implementada y probada en local, sin commit. La migración `20260929000000_participation_methods` NO está en Neon: aplicarla solo con autorización (branch de prueba → verificación → production). Después: M2 (catálogo de turnos) y M3 (pozos por día y turno). Neon production tiene las 3 migraciones anteriores, el restaurante real con su OWNER (con credencial de Better Auth) y la política v1/v2; el login real contra production se verificó desde la app local. La app todavía no está desplegada.**
 
-1. **Verificar el estado:** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (web 103 + tip-engine 257), `pnpm test:db` (270), `pnpm test:pg` (67, PostgreSQL descartable en UTF8), `pnpm prisma validate/generate`, `pnpm --filter @propinas/web build`.
+1. **Verificar el estado:** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (web 213 + tip-engine 257), `pnpm test:db` (286), `pnpm test:pg` (183, PostgreSQL descartable en UTF8), `pnpm prisma validate/generate`, `pnpm --filter @propinas/web build`.
 2. **Despliegue (solo con autorización):** Vercel con sus variables (§11) y el encabezado confiable de IP para el límite de intentos.
 3. **Siguientes pantallas** con `requireAccess` (Personal, Semana…) y las decisiones pendientes de §10/§11.
 

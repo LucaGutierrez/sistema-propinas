@@ -26,8 +26,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { formatDayMonth, formatShortDate, formatWeekday, weekDays } from '@/lib/dates';
 import { formatMoney, parseMoney } from '@/lib/decimal';
+import { methodUses } from '@/lib/distribution/participation';
 import { buildPeriodPreview, parseHours, type PreviewRow } from '@/lib/distribution/period-preview';
-import { formatHoursE2, type OpenPeriodView } from '@/lib/distribution/period-view';
+import { formatHoursE2, METHOD_LABEL, type OpenPeriodView } from '@/lib/distribution/period-view';
 import { cn } from '@/lib/utils';
 import { AdvancesSection } from './advances-section';
 import { CalculationDetail } from './calculation-detail';
@@ -97,13 +98,14 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
       buildPeriodPreview({
         totalCents: tipsInvalid ? 0n : tipsCents,
         unitCents,
+        method: view.method,
         people: view.people.map((p) => ({
           ...p,
           hours: (hours[p.employeeId] ?? '').trim() === '' ? null : (hours[p.employeeId] ?? ''),
           advanceCents: BigInt(p.advanceCents),
         })),
       }),
-    [tipsInvalid, tipsCents, unitCents, view.people, hours],
+    [tipsInvalid, tipsCents, unitCents, view.method, view.people, hours],
   );
   const rowById = new Map(preview.rows.map((r) => [r.employeeId, r]));
 
@@ -233,15 +235,18 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
 
   const missing = preview.rows.filter((r) => r.state === 'missing' && r.active).length;
   const loaded = preview.rows.filter((r) => r.state === 'worked' || r.state === 'zero').length;
+  const uses = methodUses(view.method);
   const detailRows = preview.rows
-    .filter((r) => r.state === 'worked' && r.amountCents + r.pointsE6 > 0n)
+    .filter((r) => r.state === 'worked' && r.amountCents + r.weightE8 > 0n)
     .map((r) => ({
       employeeId: r.employeeId,
       name: r.name,
       positionName: r.positionName ?? '—',
       hoursE2: r.hoursE2 ?? 0n,
-      factor: r.factor ?? '',
-      pointsE6: r.pointsE6,
+      // Solo lo que el método usa (lo mismo que queda en el snapshot al cerrar).
+      factor: uses.factor ? (r.factor ?? '') : null,
+      individualPoints: uses.points ? r.individualPoints : null,
+      weightE8: r.weightE8,
       amountCents: r.amountCents,
       advanceCents: r.advanceAppliedCents,
       finalCents: r.finalCents,
@@ -266,8 +271,10 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
         <CalculationDetail
           rows={detailRows}
           totalCents={preview.totalCents}
-          totalPointsE6={preview.totalPointsE6}
+          totalWeightE8={preview.totalWeightE8}
           roundingLabel={roundingLabel}
+          method={view.method}
+          portionDisplay={view.portionDisplay}
         />
       </ReviewStep>
     );
@@ -284,6 +291,10 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
           <p className="mt-1 text-sm text-muted-foreground">
             Semana del {formatDayMonth(view.weekStart)} al {formatShortDate(view.weekEnd)} · cargá
             la propina y las horas: el resultado se calcula solo.
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Método de participación: {METHOD_LABEL[view.method]} (versión {view.policyVersion} de la
+            configuración).
           </p>
         </div>
         <SaveIndicator state={save} readOnly={readOnly} />
@@ -436,6 +447,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
                       <HoursRow
                         key={person.employeeId}
                         row={row}
+                        showPoints={uses.points}
                         value={hours[person.employeeId] ?? ''}
                         readOnly={readOnly}
                         computed={preview.computed}
@@ -484,8 +496,10 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
               <CalculationDetail
                 rows={detailRows}
                 totalCents={preview.totalCents}
-                totalPointsE6={preview.totalPointsE6}
+                totalWeightE8={preview.totalWeightE8}
                 roundingLabel={roundingLabel}
+                method={view.method}
+                portionDisplay={view.portionDisplay}
               />
             }
           />
@@ -539,8 +553,10 @@ function HoursRow({
   onBlur,
   onEnter,
   onPaste,
+  showPoints,
 }: {
   row: PreviewRow;
+  showPoints: boolean;
   value: string;
   readOnly: boolean;
   computed: boolean;
@@ -562,6 +578,9 @@ function HoursRow({
         <p className="truncate font-medium">{row.name}</p>
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span>{row.positionName ?? 'Sin puesto'}</span>
+          {showPoints && row.individualPoints !== null ? (
+            <span className="tabular">· {row.individualPoints} pts</span>
+          ) : null}
           {!row.active ? <Badge variant="outline">De baja</Badge> : null}
           {row.state === 'missing' && row.active ? (
             <Badge variant="warning">Sin horas cargadas</Badge>
