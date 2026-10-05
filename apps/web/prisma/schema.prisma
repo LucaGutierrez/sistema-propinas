@@ -86,11 +86,19 @@ enum PotSources {
 /// Estructura del pozo: pozo único (reemplaza a restaurants.pool_mode).
 enum PoolStructure {
   SINGLE_POOL
-  /// Por sectores, en etapas: cada puesto es un sector con etapa y %; la etapa 1 sobre el total,
-  /// las siguientes sobre el saldo (policy_version_positions.stage / stage_percent).
+  /// Por sectores: sectores en orden (policy_version_sectors), cada uno con %, base (total o saldo)
+  /// y los puestos que incluye. Versiones viejas: cada puesto con etapa y % (stage / stage_percent).
   STAGED_SECTORS
 
   @@map("pool_structure")
+}
+
+/// Sobre qué se calcula el porcentaje de un sector: el total original o el saldo que queda.
+enum SectorBase {
+  TOTAL
+  REMAINDER
+
+  @@map("sector_base")
 }
 
 /// Método de participación (cómo se calcula el ponderado de cada persona):
@@ -800,6 +808,7 @@ model DistributionPolicyVersion {
   copies          DistributionPolicyVersion[] @relation("PolicyVersionCopiedFrom")
   createdBy       User                        @relation("PolicyVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   positions       PolicyVersionPosition[]
+  sectors         PolicyVersionSector[]
   settlements     WeeklySettlement[]
   changesFrom     PeriodPolicyChange[]        @relation("PolicyChangeFrom")
   changesTo       PeriodPolicyChange[]        @relation("PolicyChangeTo")
@@ -815,17 +824,40 @@ model PolicyVersionPosition {
   /// Porción por hora (> 0). 10 decimales: representa 0,65 ÷ 45 y preserva los resultados de Library.
   portion      Decimal  @db.Decimal(20, 10)
   sortOrder    Int      @default(0) @map("sort_order")
-  /// Reparto por sectores: etapa del puesto (1 = sobre el total; 2… = sobre el saldo). NULL sin asignar.
+  /// Formato anterior del reparto por sectores (versiones viejas): etapa del puesto. NULL sin asignar.
   stage        Int?     @db.SmallInt
-  /// Reparto por sectores: % de la base de su etapa (0 < % ≤ 100). NULL sin asignar.
+  /// Formato anterior: % de la base de su etapa (0 < % ≤ 100). NULL sin asignar.
   stagePercent Decimal? @map("stage_percent") @db.Decimal(5, 2)
+  /// Reparto por sectores: sector (de la MISMA versión) en el que cobra el puesto. NULL = ninguno.
+  sectorId     String?  @map("sector_id") @db.Uuid
 
   version  DistributionPolicyVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
   position Position                  @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  sector   PolicyVersionSector?      @relation(fields: [sectorId], references: [id], onDelete: Restrict)
 
   @@id([versionId, positionId])
   @@index([positionId])
+  @@index([sectorId])
   @@map("policy_version_positions")
+}
+
+/// Sectores de una versión (reparto por sectores), en orden: cada uno se lleva su % del total
+/// original o del saldo que queda en ese paso. Solo se insertan junto con su versión.
+model PolicyVersionSector {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId String     @map("version_id") @db.Uuid
+  name      String
+  /// Orden de cálculo (1 = primero).
+  sortOrder Int        @map("sort_order") @db.SmallInt
+  base      SectorBase
+  /// % de su base (0 < % ≤ 100).
+  percent   Decimal    @db.Decimal(5, 2)
+
+  version   DistributionPolicyVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  positions PolicyVersionPosition[]
+
+  @@unique([versionId, sortOrder])
+  @@map("policy_version_sectors")
 }
 
 /// Bitácora (solo INSERT) de cambios de versión de un período abierto: automáticos (al cambiar la

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { formatMoney } from '@/lib/decimal';
 import { WEIGHT_SCALE, type ParticipationMethod } from '@/lib/distribution/participation';
 import { formatHoursE2, formatWeight, weightInputsText } from '@/lib/distribution/period-view';
-import type { SectorStageView } from '@/lib/distribution/sector-snapshot';
+import { sectorPools, type SectorsSummary } from '@/lib/distribution/sector-snapshot';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
 
 export interface DetailRow {
@@ -50,7 +50,7 @@ export function CalculationDetail({
   method: ParticipationMethod;
   portionDisplay: PortionDisplay;
   /** Reparto por sectores: cada sector es un pozo (su gente se agrupa por el nombre del puesto). */
-  sectors?: readonly SectorStageView[] | null;
+  sectors?: SectorsSummary | null;
 }) {
   const [open, setOpen] = useState(false);
   if (rows.length === 0 || totalWeightE8 === 0n) return null;
@@ -60,13 +60,17 @@ export function CalculationDetail({
   const inputs = (row: DetailRow) =>
     weightInputsText({ ...row, hours: formatHoursE2(row.hoursE2) }, portionDisplay);
   const pools = sectors
-    ? sectors
-        .flatMap((stage) => stage.sectors)
+    ? sectorPools(sectors)
         .map((sector) => {
-          const members = rows.filter((r) => r.positionName === sector.name);
+          const members = rows.filter((r) => sector.positionNames.includes(r.positionName));
           const weightE8 = members.reduce((sum, r) => sum + r.weightE8, 0n);
-          const cents = BigInt(sector.amountCents);
-          return { key: sector.id, name: sector.name, cents, weightE8, members };
+          return {
+            key: sector.id,
+            name: sector.name,
+            cents: sector.amountCents,
+            weightE8,
+            members,
+          };
         })
         .filter((pool) => pool.members.length > 0)
     : [{ key: 'pozo', name: '', cents: totalCents, weightE8: totalWeightE8, members: rows }];
@@ -105,11 +109,10 @@ export function CalculationDetail({
           {sectors ? (
             <p className="text-muted-foreground">
               Primero se calcula cuánto recibe cada{' '}
-              <strong className="text-foreground">sector</strong> (etapa por etapa, arriba).
-              Después, dentro de cada sector, el{' '}
-              <strong className="text-foreground">ponderado</strong> de cada persona es{' '}
-              {EXPLANATION[method]} y el monto del sector se reparte en proporción, redondeado a{' '}
-              {roundingLabel} para que la suma dé exacto.
+              <strong className="text-foreground">sector</strong> (paso a paso, arriba). Después,
+              dentro de cada sector, el <strong className="text-foreground">ponderado</strong> de
+              cada persona es {EXPLANATION[method]} y el monto del sector se reparte en proporción,
+              redondeado a {roundingLabel} para que la suma dé exacto.
             </p>
           ) : (
             <p className="text-muted-foreground">

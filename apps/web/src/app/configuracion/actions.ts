@@ -69,22 +69,23 @@ export async function addPositionAction(name: string, factor: string): Promise<s
   return run({ kind: 'addPosition', name: String(name), factor: String(factor) });
 }
 
-const stagesInput = z
+const sectorsInput = z
   .array(
     z.object({
-      positionId: z.string().min(1).max(64),
-      stage: z.number().int().min(1).max(9).nullable(),
+      name: z.string().max(80),
+      base: z.enum(['TOTAL', 'REMAINDER']),
       percent: z.string().max(12),
+      positionIds: z.array(z.string().min(1).max(64)).max(100),
     }),
   )
-  .min(1, { error: 'Definí al menos un sector.' })
-  .max(100);
+  .min(1, { error: 'Agregá al menos un sector.' })
+  .max(9, { error: 'Puede haber hasta 8 sectores.' });
 
-/** Etapas y porcentajes de todos los puestos (reparto por sectores): una versión nueva. */
-export async function setStagesAction(stages: unknown): Promise<string | null> {
-  const parsed = stagesInput.safeParse(stages);
+/** Todos los sectores (reparto por sectores): una versión nueva. */
+export async function setSectorsAction(sectors: unknown): Promise<string | null> {
+  const parsed = sectorsInput.safeParse(sectors);
   if (!parsed.success) return parsed.error.issues[0]?.message ?? 'Revisá los datos.';
-  return run({ kind: 'stages', stages: parsed.data });
+  return run({ kind: 'sectors', sectors: parsed.data });
 }
 
 export async function setPortionAction(positionId: string, factor: string): Promise<string | null> {

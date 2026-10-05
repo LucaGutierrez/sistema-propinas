@@ -10,15 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import { ROLES, inviteMember, removeMember, updateMember } from '@/lib/demo-store/members';
 import type { Member, Role, Venue } from '@/lib/demo-store/model';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from '@/lib/demo-store/permissions';
 import { newId, useDemoStore } from '@/lib/demo-store/store';
 import { setViewAs } from '@/lib/demo-store/workspace';
 import { cn } from '@/lib/utils';
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 md:text-sm';
 
 const ROLE_BADGE: Record<Role, string> = {
   ENCARGADO: 'border-primary/30 bg-primary/10 text-primary',
@@ -136,7 +134,7 @@ function MemberRow({ venue, member }: { venue: Venue; member: Member }) {
         <Badge variant="warning">Invitación pendiente</Badge>
         <select
           aria-label={`Permiso de ${member.name}`}
-          className={cn(SELECT_CLASS, 'w-36')}
+          className={cn(nativeSelectClass, 'w-36')}
           value={member.role}
           onChange={(event) =>
             setError(apply((v) => updateMember(v, member.id, { role: event.target.value as Role })))
@@ -237,7 +235,7 @@ function InviteForm({ venue }: { venue: Venue }) {
             <Label htmlFor="invitado-personal">¿Es parte del personal?</Label>
             <select
               id="invitado-personal"
-              className={SELECT_CLASS}
+              className={nativeSelectClass}
               value={staffId}
               onChange={(event) => {
                 const id = event.target.value;
@@ -285,7 +283,7 @@ function InviteForm({ venue }: { venue: Venue }) {
             <Label htmlFor="invitado-permiso">Permiso</Label>
             <select
               id="invitado-permiso"
-              className={SELECT_CLASS}
+              className={nativeSelectClass}
               value={role}
               onChange={(event) => {
                 setRole(event.target.value as Role);

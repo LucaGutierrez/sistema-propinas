@@ -57,7 +57,10 @@ export default async function FeedbackPage({
       </Card>
       {isFeedbackReviewer(user) ? (
         <p className="mt-4 text-sm">
-          <Link href="/feedback/revisar" className="font-medium text-primary hover:underline">
+          <Link
+            href="/feedback/revisar"
+            className="inline-flex min-h-11 items-center font-medium text-primary hover:underline md:min-h-0"
+          >
             Ver los comentarios recibidos
           </Link>
         </p>

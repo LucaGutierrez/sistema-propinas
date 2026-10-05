@@ -8,9 +8,10 @@
  * para mostrar el resultado en vivo y el servidor la vuelve a ejecutar con los datos de la base al
  * cerrar: los dos llegan a los mismos importes porque es la misma función con los mismos datos.
  *
- * Con la política "por sectores, en etapas" (`sectors`), primero se calcula el monto de cada sector
- * (`sector-stages.ts`: la etapa 1 sobre el total, las siguientes sobre el saldo) y después cada
- * sector es un pozo que se reparte entre su gente con el mismo motor de participación.
+ * Con la política "por sectores" (`sectors`), primero se calcula el monto de cada sector, en orden
+ * (`sector-steps.ts`: cada uno sobre el total o sobre el saldo que queda) y después cada sector es
+ * un pozo que se reparte entre la gente de SUS puestos con el mismo motor de participación. Un
+ * sector sin puestos cobra su monto entero (no se reparte por persona).
  *
  * Además de calcular, decide si el reparto se puede cerrar. Una persona activa SIN horas cargadas
  * nunca se reparte en silencio entre las demás: queda marcada "Sin horas cargadas" y bloquea el
@@ -28,14 +29,26 @@ import {
   type ParticipationMethod,
 } from './participation';
 import { FACTOR_SCALE, HOURS_SCALE } from './provisional-formula';
+import { stepsToView, type SectorStepsView } from './sector-snapshot';
 import {
-  checkStages,
-  computeStages,
-  formatStagePercent,
-  unassignedCents,
-  type SectorAssignment,
-  type StageResult,
-} from './sector-stages';
+  checkSectors,
+  computeSectors,
+  formatSectorPercent,
+  sectorBaseLong,
+  type SectorInput,
+} from './sector-steps';
+
+/** Configuración por sectores de la versión del período. */
+export interface SectorConfig {
+  sectors: readonly SectorInput[];
+  /** Puestos de la versión (para validar y nombrar los puestos de cada sector). */
+  positions: readonly { id: string; name: string }[];
+  /**
+   * Versión guardada con el formato anterior (cada puesto con etapa y %), sin sectores propios:
+   * hay que volver a guardarla en Configuración antes de repartir.
+   */
+  legacy?: boolean;
+}
 
 /** Horas de un período semanal: nadie puede tener más de 24 × 7 (la base aplica el mismo tope). */
 export const MAX_PERIOD_HOURS = 168;
@@ -110,6 +123,7 @@ export type PreviewIssueCode =
   | 'NO_HOURS'
   | 'SECTORS_CONFIG'
   | 'EMPTY_SECTOR'
+  | 'NO_SECTOR'
   | 'UNASSIGNED'
   | 'ROUNDING';
 
@@ -150,10 +164,15 @@ export interface PeriodPreview {
    */
   hourValues: HourValue[];
   /**
-   * Reparto por sectores: cada etapa con su base y el monto de cada sector, y cuántas personas
-   * cobran en cada sector. null con pozo único o si la configuración por sectores está incompleta.
+   * Reparto por sectores: cada sector con su base, su monto y cuántas personas cobran en él, y lo
+   * sin asignar. null con pozo único o si la configuración por sectores está incompleta.
    */
-  sectors: { stages: StageResult[]; people: Map<string, number> } | null;
+  sectors: SectorStepsView | null;
+  /**
+   * Lo que cobran los sectores SIN puestos (se entrega al sector entero, no a personas). Está
+   * dentro del total; no está en `totalFinalCents`, que es lo de los sobres de cada persona.
+   */
+  sectorOnlyCents: bigint;
 }
 
 /** Horas escritas → centésimas de hora; null si el número no es válido o supera el período. */
@@ -186,8 +205,8 @@ export function buildPeriodPreview(input: {
   unitCents: bigint;
   /** Método de participación de la política (por defecto BY_POSITION, el de hoy). */
   method?: ParticipationMethod;
-  /** Sectores con etapa y porcentaje (política por sectores); null/ausente = pozo único. */
-  sectors?: readonly SectorAssignment[] | null;
+  /** Sectores de la política (reparto por sectores); null/ausente = pozo único. */
+  sectors?: SectorConfig | null;
   people: readonly PreviewPerson[];
 }): PeriodPreview {
   const method = input.method ?? 'BY_POSITION';
@@ -299,15 +318,23 @@ export function buildPeriodPreview(input: {
   let pointValueCents: bigint | null = null;
   const hourValues: HourValue[] = [];
   let sectors: PeriodPreview['sectors'] = null;
+  let sectorOnlyCents = 0n;
 
-  // Por sectores: la configuración tiene que estar completa y cerrar antes de calcular nada.
-  const stagesCheck =
-    input.sectors !== undefined && input.sectors !== null ? checkStages(input.sectors) : null;
-  if (stagesCheck && !stagesCheck.ok) {
+  // Por sectores: la configuración tiene que estar completa antes de calcular nada.
+  const config = input.sectors ?? null;
+  const sectorsCheck = config ? checkSectors(config.sectors, config.positions) : null;
+  if (config?.legacy) {
     issues.push(
       issue(
         'SECTORS_CONFIG',
-        `La configuración por sectores está incompleta: ${stagesCheck.errors.join(' ')} Completala en Configuración.`,
+        'El reparto por sectores cambió de forma: entrá a Configuración → Reparto por sectores, revisá los sectores y guardalos de nuevo.',
+      ),
+    );
+  } else if (sectorsCheck && !sectorsCheck.ok) {
+    issues.push(
+      issue(
+        'SECTORS_CONFIG',
+        `La configuración por sectores está incompleta: ${sectorsCheck.errors.join(' ')} Completala en Configuración.`,
       ),
     );
   }
@@ -344,28 +371,54 @@ export function buildPeriodPreview(input: {
     }
   };
 
-  if (input.totalCents > 0n && participants.length > 0 && (!stagesCheck || stagesCheck.ok)) {
+  if (
+    input.totalCents > 0n &&
+    participants.length > 0 &&
+    !config?.legacy &&
+    (!sectorsCheck || sectorsCheck.ok)
+  ) {
     try {
       // Bruto de cada persona: su parte del pozo único, o del pozo de su sector.
       const shares = new Map<
         string,
         { weightE8: bigint; percentE2: bigint; amountCents: bigint }
       >();
-      if (stagesCheck?.ok) {
-        const stages = computeStages(input.totalCents, stagesCheck.stages, input.unitCents);
+      if (config && sectorsCheck?.ok) {
+        const results = computeSectors(input.totalCents, sectorsCheck.sectors, input.unitCents);
         const people = new Map<string, number>();
         const empty: { name: string; amountCents: bigint }[] = [];
-        for (const sector of stages.flatMap((stage) => stage.sectors)) {
-          const members = participants.filter((r) => r.positionId === sector.id);
+        const covered = new Set(results.flatMap((s) => s.positionIds));
+        // Quien trabajó en un puesto que no está en ningún sector nunca cobra "de algún lado":
+        // se avisa y no se puede cerrar hasta decidir a qué sector va su puesto.
+        const outside = participants.filter(
+          (r) => r.positionId !== null && !covered.has(r.positionId),
+        );
+        if (outside.length > 0) {
+          const positions = [...new Set(outside.map((r) => r.positionName ?? '—'))].join(', ');
+          issues.push(
+            issue(
+              'NO_SECTOR',
+              `${names(outside)} tiene horas, pero su puesto (${positions}) no está en ningún sector. Agregalo a un sector en Configuración → Reparto por sectores, o poné 0 horas si no cobra.`,
+              outside,
+            ),
+          );
+        }
+        for (const sector of results) {
+          if (sector.positionIds.length === 0) {
+            // Sector sin puestos: cobra el sector entero, sin reparto por persona.
+            sectorOnlyCents += sector.amountCents;
+            people.set(sector.id, 0);
+            continue;
+          }
+          const inSector = (r: PreviewRow) =>
+            r.positionId !== null && sector.positionIds.includes(r.positionId);
+          const members = participants.filter(inSector);
           people.set(sector.id, members.length);
           if (members.length === 0) {
             // La plata de un sector sin nadie que cobre nunca pasa en silencio a otro sector. Si
             // todavía faltan horas de alguien del sector, ya lo dice MISSING_HOURS.
             const pending = rows.some(
-              (r) =>
-                r.positionId === sector.id &&
-                r.active &&
-                (r.state === 'missing' || r.state === 'invalid'),
+              (r) => inSector(r) && r.active && (r.state === 'missing' || r.state === 'invalid'),
             );
             if (sector.amountCents > 0n && !pending) {
               empty.push({ name: sector.name, amountCents: sector.amountCents });
@@ -404,23 +457,29 @@ export function buildPeriodPreview(input: {
                 )
                 .join(
                   ' ',
-                )} Cargá las horas de su gente o revisá los porcentajes en Configuración: esa plata no pasa a otros sectores.`,
+                )} Cargá las horas de su gente o revisá los sectores en Configuración: esa plata no pasa a otros sectores.`,
             ),
           );
         }
-        // Lo que la última etapa no reparte queda sin asignar: se muestra y no pasa a nadie. El
-        // cierre registra cada peso del total, así que con plata sin asignar no se puede cerrar.
-        const unassigned = unassignedCents(stages);
-        const lastStage = stages[stages.length - 1];
-        if (unassigned > 0n && lastStage) {
+        const positionName = new Map(config.positions.map((p) => [p.id, p.name]));
+        sectors = stepsToView(
+          input.totalCents,
+          results,
+          (id) => positionName.get(id) ?? '—',
+          people,
+        );
+        // Lo que queda después del último sector no se reparte solo: se muestra y no pasa a
+        // nadie. El cierre registra cada peso del total, así que con plata sin asignar no cierra.
+        const unassigned = BigInt(sectors.unassignedCents);
+        const last = results[results.length - 1];
+        if (unassigned > 0n && last) {
           issues.push(
             issue(
               'UNASSIGNED',
-              `Quedan ${formatMoney(unassigned)} sin asignar: la etapa ${lastStage.number} reparte el ${formatStagePercent(lastStage.percentE2)} % de ${formatMoney(lastStage.baseCents)}. Esa plata no pasa a ningún sector. Para cerrar, ajustá los porcentajes en Configuración (la última etapa tiene que repartir el 100 %).`,
+              `Quedan ${formatMoney(unassigned)} sin asignar: después de ${last.name} (${formatSectorPercent(last.percentE2)} % ${sectorBaseLong(last.base)}) sobra plata que no es de ningún sector. Para cerrar, en Configuración → Reparto por sectores subí el porcentaje del último sector (100 % del saldo se lleva todo lo que queda) o agregá un sector para ese saldo.`,
             ),
           );
         }
-        sectors = { stages, people };
       } else {
         const pool = computePool(
           input.totalCents,
@@ -480,5 +539,6 @@ export function buildPeriodPreview(input: {
     pointValueCents,
     hourValues,
     sectors,
+    sectorOnlyCents,
   };
 }

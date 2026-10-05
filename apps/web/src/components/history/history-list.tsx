@@ -1,22 +1,38 @@
-import { ChevronRightIcon, HistoryIcon, LockIcon, SearchIcon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  FilterIcon,
+  HistoryIcon,
+  LockIcon,
+  SearchIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import { formatDayMonth, formatShortDate } from '@/lib/dates';
 import { formatMoney } from '@/lib/decimal';
 import { historyHref } from '@/lib/history/filters';
 import type { HistoryFilters, HistoryList } from '@/lib/history/view';
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 md:text-sm';
 
 const dateTime = new Intl.DateTimeFormat('es-AR', {
   dateStyle: 'short',
   timeStyle: 'short',
   timeZone: 'America/Argentina/Buenos_Aires',
 });
+
+function StatusBadge({ status }: { status: string }) {
+  return status === 'VOIDED' ? (
+    <Badge variant="outline">Eliminado</Badge>
+  ) : (
+    <Badge variant="success">
+      <LockIcon />
+      Cerrado
+    </Badge>
+  );
+}
 
 /** Historial de repartos (solo lectura): filtros por URL, lista y paginación. */
 export function HistoryListView({ list, filters }: { list: HistoryList; filters: HistoryFilters }) {
@@ -34,63 +50,78 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
         </p>
       </div>
 
-      <form
-        method="get"
-        action="/historial"
-        className="mb-4 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-2 lg:grid-cols-4"
-      >
-        <div>
-          <label htmlFor="estado" className="mb-1 block text-xs text-muted-foreground">
-            Estado
-          </label>
-          <select
-            id="estado"
-            name="estado"
-            defaultValue={filters.status === 'CLOSED' ? '' : (filters.status ?? 'TODOS')}
-            className={SELECT_CLASS}
-          >
-            <option value="">Guardados</option>
-            <option value="VOIDED">Eliminados</option>
-            <option value="TODOS">Todos</option>
-          </select>
-        </div>
-        <div>
-          <label htmlFor="desde" className="mb-1 block text-xs text-muted-foreground">
-            Semanas desde
-          </label>
-          <Input id="desde" name="desde" type="date" defaultValue={filters.from ?? ''} />
-        </div>
-        <div>
-          <label htmlFor="hasta" className="mb-1 block text-xs text-muted-foreground">
-            Semanas hasta
-          </label>
-          <Input id="hasta" name="hasta" type="date" defaultValue={filters.to ?? ''} />
-        </div>
-        {list.ownOnly ? null : (
-          <div>
-            <label htmlFor="persona" className="mb-1 block text-xs text-muted-foreground">
-              Persona
+      {/* En el celular los filtros se pliegan para que la lista quede a la vista. */}
+      <details className="group mb-4 rounded-xl border bg-card" open={filtered || undefined}>
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center gap-2">
+            <FilterIcon className="size-4 text-muted-foreground" />
+            Filtros
+            {filtered ? (
+              <Badge variant="secondary" className="font-normal">
+                Activos
+              </Badge>
+            ) : null}
+          </span>
+          <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <form
+          method="get"
+          action="/historial"
+          className="grid grid-cols-2 gap-3 border-t p-4 lg:grid-cols-4"
+        >
+          <div className="col-span-2 lg:col-span-1">
+            <label htmlFor="estado" className="mb-1 block text-xs text-muted-foreground">
+              Estado
             </label>
-            <Input
-              id="persona"
-              name="persona"
-              placeholder="Nombre"
-              defaultValue={filters.employee ?? ''}
-            />
+            <select
+              id="estado"
+              name="estado"
+              defaultValue={filters.status === 'CLOSED' ? '' : (filters.status ?? 'TODOS')}
+              className={nativeSelectClass}
+            >
+              <option value="">Guardados</option>
+              <option value="VOIDED">Eliminados</option>
+              <option value="TODOS">Todos</option>
+            </select>
           </div>
-        )}
-        <div className="flex gap-2 sm:col-span-2 lg:col-span-4">
-          <Button type="submit" size="sm">
-            <SearchIcon />
-            Filtrar
-          </Button>
-          {filtered ? (
-            <Button asChild size="sm" variant="ghost">
-              <Link href="/historial">Limpiar</Link>
+          <div>
+            <label htmlFor="desde" className="mb-1 block text-xs text-muted-foreground">
+              Semanas desde
+            </label>
+            <Input id="desde" name="desde" type="date" defaultValue={filters.from ?? ''} />
+          </div>
+          <div>
+            <label htmlFor="hasta" className="mb-1 block text-xs text-muted-foreground">
+              Semanas hasta
+            </label>
+            <Input id="hasta" name="hasta" type="date" defaultValue={filters.to ?? ''} />
+          </div>
+          {list.ownOnly ? null : (
+            <div className="col-span-2 lg:col-span-1">
+              <label htmlFor="persona" className="mb-1 block text-xs text-muted-foreground">
+                Persona
+              </label>
+              <Input
+                id="persona"
+                name="persona"
+                placeholder="Nombre"
+                defaultValue={filters.employee ?? ''}
+              />
+            </div>
+          )}
+          <div className="col-span-2 grid grid-cols-2 gap-2 sm:flex lg:col-span-4">
+            <Button type="submit" size="sm" className={filtered ? '' : 'col-span-2'}>
+              <SearchIcon />
+              Filtrar
             </Button>
-          ) : null}
-        </div>
-      </form>
+            {filtered ? (
+              <Button asChild size="sm" variant="outline">
+                <Link href="/historial">Limpiar</Link>
+              </Button>
+            ) : null}
+          </div>
+        </form>
+      </details>
 
       {list.items.length === 0 ? (
         <Card className="text-center">
@@ -126,6 +157,9 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
                     <span className="block font-medium">
                       Semana del {formatDayMonth(item.weekStart)} al {formatShortDate(item.weekEnd)}
                     </span>
+                    <span className="my-1 block sm:hidden">
+                      <StatusBadge status={item.status} />
+                    </span>
                     <span className="block text-sm text-muted-foreground">
                       {formatMoney(BigInt(item.totalCents))}
                       {list.ownOnly ? ' te correspondieron' : ''}
@@ -149,14 +183,9 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
                     </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
-                    {item.status === 'VOIDED' ? (
-                      <Badge variant="outline">Eliminado</Badge>
-                    ) : (
-                      <Badge variant="success">
-                        <LockIcon />
-                        Cerrado
-                      </Badge>
-                    )}
+                    <span className="hidden sm:inline-flex">
+                      <StatusBadge status={item.status} />
+                    </span>
                     <ChevronRightIcon className="size-4 text-muted-foreground" />
                   </span>
                 </Link>
@@ -167,7 +196,7 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
       )}
 
       {filters.page > 1 || list.hasMore ? (
-        <div className="mt-4 flex justify-between">
+        <div className="mt-4 flex justify-between gap-2">
           {filters.page > 1 ? (
             <Button asChild variant="outline" size="sm">
               <Link href={historyHref(filters, filters.page - 1)}>Más recientes</Link>

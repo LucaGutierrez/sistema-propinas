@@ -31,7 +31,7 @@ import { buildPeriodPreview, parseHours, type PreviewRow } from '@/lib/distribut
 import { formatHoursE2, METHOD_LABEL, type OpenPeriodView } from '@/lib/distribution/period-view';
 import { cn } from '@/lib/utils';
 import { SectorBreakdown } from '@/components/distribution/sector-breakdown';
-import { stagesToView } from '@/lib/distribution/sector-snapshot';
+import type { SectorsSummary } from '@/lib/distribution/sector-snapshot';
 import { AdvancesSection } from './advances-section';
 import { CalculationDetail } from './calculation-detail';
 
@@ -41,7 +41,7 @@ type SaveState =
 /** Centavos → texto para el campo ("34799000" → "347.990"; con centavos "1.234,50"). */
 function moneyInput(cents: bigint): string {
   if (cents === 0n) return '';
-  const text = formatMoney(cents).replace('$ ', '');
+  const text = formatMoney(cents).replace(/^\$\s/, '');
   return text.endsWith(',00') ? text.slice(0, -3) : text;
 }
 
@@ -110,8 +110,8 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
       }),
     [tipsInvalid, tipsCents, unitCents, view.method, view.sectors, view.people, hours],
   );
-  const sectorView = preview.sectors
-    ? stagesToView(preview.sectors.stages, preview.sectors.people)
+  const sectorView: SectorsSummary | null = preview.sectors
+    ? { kind: 'steps', ...preview.sectors }
     : null;
   const rowById = new Map(preview.rows.map((r) => [r.employeeId, r]));
 
@@ -267,6 +267,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
         totalCents={preview.totalCents}
         totalAdvanceCents={preview.totalAdvanceCents}
         totalFinalCents={preview.totalFinalCents}
+        sectorOnlyCents={preview.sectorOnlyCents}
         canClose={preview.canClose}
         issues={preview.issues.map((i) => i.message)}
         closing={closing}
@@ -274,7 +275,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
         onBack={() => setPhase('edit')}
         onClose={close}
       >
-        {sectorView ? <SectorsCard stages={sectorView} /> : null}
+        {sectorView ? <SectorsCard summary={sectorView} /> : null}
         <CalculationDetail
           rows={detailRows}
           totalCents={preview.totalCents}
@@ -301,7 +302,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
             la propina y las horas: el resultado se calcula solo.
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {view.sectors ? 'Reparto por sectores, en etapas · ' : ''}Método de participación:{' '}
+            {view.sectors ? 'Reparto por sectores · ' : ''}Método de participación:{' '}
             {METHOD_LABEL[view.method]} (versión {view.policyVersion} de la configuración).
           </p>
         </div>
@@ -385,7 +386,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
                 {readOnly ? null : (
                   <button
                     type="button"
-                    className="text-primary hover:underline"
+                    className="inline-flex min-h-11 items-center text-primary hover:underline md:min-h-0"
                     onClick={() => {
                       if (tipsMode === 'total') {
                         setTipsMode('daily');
@@ -500,7 +501,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
           <ResultCard
             preview={preview}
             peopleCount={preview.rows.length}
-            sectors={sectorView ? <SectorsCard stages={sectorView} /> : null}
+            sectors={sectorView ? <SectorsCard summary={sectorView} /> : null}
             detail={
               <CalculationDetail
                 rows={detailRows}
@@ -659,17 +660,18 @@ function HoursRow({
   );
 }
 
-function SectorsCard({ stages }: { stages: Parameters<typeof SectorBreakdown>[0]['stages'] }) {
+function SectorsCard({ summary }: { summary: SectorsSummary }) {
   return (
     <Card className="mb-4 gap-3">
       <CardHeader>
         <CardTitle>Reparto por sectores</CardTitle>
         <CardDescription>
-          Cuánto recibe cada sector y sobre qué base se calcula cada porcentaje.
+          Paso a paso: sobre qué monto se calcula cada porcentaje, cuánto recibe cada sector y
+          cuánto queda.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <SectorBreakdown stages={stages} />
+        <SectorBreakdown summary={summary} />
       </CardContent>
     </Card>
   );
@@ -790,6 +792,7 @@ function ReviewStep({
   totalCents,
   totalAdvanceCents,
   totalFinalCents,
+  sectorOnlyCents,
   canClose,
   issues,
   closing,
@@ -803,6 +806,8 @@ function ReviewStep({
   totalCents: bigint;
   totalAdvanceCents: bigint;
   totalFinalCents: bigint;
+  /** Lo de los sectores sin puestos (se entrega al sector, no va en sobres). */
+  sectorOnlyCents: bigint;
   canClose: boolean;
   issues: string[];
   closing: boolean;
@@ -819,7 +824,7 @@ function ReviewStep({
       <button
         type="button"
         onClick={onBack}
-        className="mb-4 flex items-center gap-1.5 text-sm text-primary hover:underline"
+        className="mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm text-primary hover:underline md:mb-4 md:min-h-0"
       >
         <ArrowLeftIcon className="size-4" />
         Volver a editar
@@ -865,17 +870,23 @@ function ReviewStep({
             <span>Propina repartida</span>
             <span className="tabular font-medium">{formatMoney(totalCents)}</span>
           </div>
+          {sectorOnlyCents > 0n ? (
+            <div className="flex justify-between gap-3 text-muted-foreground">
+              <span>A sectores sin puestos</span>
+              <span className="tabular">− {formatMoney(sectorOnlyCents)}</span>
+            </div>
+          ) : null}
           {hasAdvances ? (
-            <>
-              <div className="flex justify-between text-muted-foreground">
-                <span>Adelantos descontados</span>
-                <span className="tabular">− {formatMoney(totalAdvanceCents)}</span>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <span>A entregar en sobres</span>
-                <span className="tabular">{formatMoney(totalFinalCents)}</span>
-              </div>
-            </>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Adelantos descontados</span>
+              <span className="tabular">− {formatMoney(totalAdvanceCents)}</span>
+            </div>
+          ) : null}
+          {hasAdvances || sectorOnlyCents > 0n ? (
+            <div className="flex justify-between font-semibold">
+              <span>A entregar en sobres</span>
+              <span className="tabular">{formatMoney(totalFinalCents)}</span>
+            </div>
           ) : null}
         </div>
       </Card>

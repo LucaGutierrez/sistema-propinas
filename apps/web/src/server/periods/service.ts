@@ -25,7 +25,6 @@ import {
   type ParticipationMethod,
 } from '@/lib/distribution/participation';
 import { FORMULA_STATUS } from '@/lib/distribution/provisional-formula';
-import { stagesToView } from '@/lib/distribution/sector-snapshot';
 import { formatScaled } from '@/lib/decimal';
 import { assertRole, type AccessContext } from '../access/access';
 import { CAN, roleAllowed } from '../access/roles';
@@ -51,7 +50,7 @@ import type {
 export const CALC_VERSION = 'provisional-1';
 export const CALC_VERSION_WITH_POINTS = 'provisional-2';
 /** Por sectores, en etapas (cada sector es un pozo dentro del que se aplica el método). */
-export const CALC_VERSION_SECTORS = 'sectores-1';
+export const CALC_VERSION_SECTORS = 'sectores-2';
 
 export function calcVersionFor(method: ParticipationMethod, staged = false): string {
   if (staged) return `${CALC_VERSION_SECTORS}+${calcVersionFor(method)}`;
@@ -750,7 +749,8 @@ export async function closePeriod(
         totalCents: preview.totalCents,
         totalPoints: decimalText(preview.totalWeightE8, WEIGHT_SCALE),
         totalAdvancesCents: preview.totalAdvanceCents,
-        totalFinalCents: preview.totalFinalCents,
+        // Lo que se entrega: los sobres de cada persona y lo de los sectores sin puestos.
+        totalFinalCents: preview.totalFinalCents + preview.sectorOnlyCents,
         closedAt: now,
         closedById: access.userId,
         settlementId: period.id,
@@ -818,10 +818,21 @@ export async function closePeriod(
             portion: p.portion,
             stage: p.stage,
             stagePercent: p.stagePercent,
+            sectorId: p.sectorId,
           })),
-          // Por sectores: cada etapa con su base y el monto de cada sector (lo lee el historial).
+          // Por sectores: la configuración y, en orden, la base, el % y el monto de cada sector y
+          // lo que quedó después (lo lee el historial sin recalcular).
           ...(preview.sectors
-            ? { sectorStages: stagesToView(preview.sectors.stages, preview.sectors.people) }
+            ? {
+                sectors: data.policy.sectors.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  sortOrder: s.sortOrder,
+                  base: s.base,
+                  percent: s.percent,
+                })),
+                sectorSteps: preview.sectors,
+              }
             : {}),
           // Cómo se mostraba la porción al cerrar (solo auditoría: no interviene en el cálculo).
           portionDisplay: restaurant?.portionDisplay ?? 'DECIMAL',
@@ -830,7 +841,8 @@ export async function closePeriod(
         calcVersion,
         totalCents: preview.totalCents,
         totalAdvancesCents: preview.totalAdvanceCents,
-        totalFinalCents: preview.totalFinalCents,
+        // Lo que se entrega: los sobres de cada persona y lo de los sectores sin puestos.
+        totalFinalCents: preview.totalFinalCents + preview.sectorOnlyCents,
         closedAt: now,
         closedById: access.userId,
       },
@@ -845,7 +857,7 @@ export async function closePeriod(
         payload: {
           weekStart: period.weekStart,
           totalCents: preview.totalCents.toString(),
-          totalFinalCents: preview.totalFinalCents.toString(),
+          totalFinalCents: (preview.totalFinalCents + preview.sectorOnlyCents).toString(),
           people: worked.length,
           calcVersion,
           method: data.method,
@@ -858,7 +870,7 @@ export async function closePeriod(
       value: {
         settlementId: period.id,
         totalCents: preview.totalCents,
-        totalFinalCents: preview.totalFinalCents,
+        totalFinalCents: preview.totalFinalCents + preview.sectorOnlyCents,
         payments: payments.length,
       },
     };

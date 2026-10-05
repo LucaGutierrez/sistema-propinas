@@ -14,7 +14,7 @@
 import { parseDecimal } from '@/lib/decimal';
 import { SEED_POSITIONS } from '@/lib/demo/data';
 import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
-import { checkStages } from '@/lib/distribution/sector-stages';
+import { checkSectors, sectorInputs, type PolicySector } from '@/lib/distribution/sector-steps';
 import {
   PARAMS,
   STANDARD_VALUES,
@@ -39,6 +39,8 @@ export interface PolicyVersion {
   values: DistributionConfig;
   /** Puestos con su peso: son parte de la política porque definen el cálculo. */
   positions: Position[];
+  /** Reparto por sectores: sectores en orden (cada puesto dice en cuál cobra). */
+  sectors?: PolicySector[];
 }
 
 export interface VenuePolicy {
@@ -149,13 +151,9 @@ export function policyGaps(version: PolicyVersion): string[] {
     }
   }
   if (version.values.groups === 'PORCENTAJE_POR_GRUPO' && version.positions.length > 0) {
-    const check = checkStages(
-      version.positions.map((p) => ({
-        id: p.id,
-        name: p.name,
-        stage: p.stage ?? null,
-        percent: p.stagePercent ?? null,
-      })),
+    const check = checkSectors(
+      sectorInputs(version.sectors ?? [], version.positions),
+      version.positions,
     );
     if (!check.ok) gaps.push(...check.errors.map((e) => `Reparto por sectores: ${e}`));
   }

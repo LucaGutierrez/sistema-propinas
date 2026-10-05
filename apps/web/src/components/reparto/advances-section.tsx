@@ -7,12 +7,10 @@ import { addAdvanceAction, voidAdvanceAction } from '@/app/reparto/actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import { formatDayMonth, formatWeekday, weekDays } from '@/lib/dates';
 import { formatMoney } from '@/lib/decimal';
 import type { OpenPeriodView } from '@/lib/distribution/period-view';
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 md:text-sm';
 
 /**
  * Adelantos: plata que alguien ya recibió a cuenta de su propina. Se descuentan de lo que le toca
@@ -152,7 +150,7 @@ export function AdvancesSection({ view, readOnly }: { view: OpenPeriodView; read
               </label>
               <select
                 id="advance-person"
-                className={SELECT_CLASS}
+                className={nativeSelectClass}
                 value={employeeId}
                 onChange={(e) => setEmployeeId(e.target.value)}
               >
@@ -170,7 +168,7 @@ export function AdvancesSection({ view, readOnly }: { view: OpenPeriodView; read
               </label>
               <select
                 id="advance-date"
-                className={SELECT_CLASS}
+                className={nativeSelectClass}
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
               >

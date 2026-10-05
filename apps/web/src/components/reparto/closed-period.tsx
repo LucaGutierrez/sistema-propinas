@@ -9,6 +9,7 @@ import { formatDayMonth, formatShortDate } from '@/lib/dates';
 import { formatMoney } from '@/lib/decimal';
 import { type ClosedPeriodView } from '@/lib/distribution/period-view';
 import { SectorBreakdown } from '@/components/distribution/sector-breakdown';
+import { sectorOnlyCents } from '@/lib/distribution/sector-snapshot';
 import { CalculationDetail } from './calculation-detail';
 
 const PAYMENT_LABEL = {
@@ -33,6 +34,8 @@ export function ClosedPeriod({
   justClosed: boolean;
 }) {
   const hasAdvances = BigInt(view.totalAdvancesCents) > 0n;
+  // Lo de los sectores sin puestos se entrega al sector: está en el total, no en los sobres.
+  const sectorOnly = sectorOnlyCents(view.sectorStages);
   const hoursE2 = (text: string) => {
     const [int = '0', frac = ''] = text.split(',');
     return BigInt(int.replace(/\./g, '')) * 100n + BigInt((frac + '00').slice(0, 2));
@@ -41,7 +44,7 @@ export function ClosedPeriod({
     <div className="mx-auto max-w-3xl">
       <Link
         href="/reparto"
-        className="mb-4 flex items-center gap-1.5 text-sm text-primary hover:underline print:hidden"
+        className="mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm text-primary hover:underline md:mb-4 md:min-h-0 print:hidden"
       >
         <ArrowLeftIcon className="size-4" />
         Repartos
@@ -141,17 +144,25 @@ export function ClosedPeriod({
             <span>Propina repartida</span>
             <span className="tabular font-medium">{formatMoney(BigInt(view.totalCents))}</span>
           </div>
+          {sectorOnly > 0n ? (
+            <div className="flex justify-between gap-3 text-muted-foreground">
+              <span>A sectores sin puestos</span>
+              <span className="tabular">− {formatMoney(sectorOnly)}</span>
+            </div>
+          ) : null}
           {hasAdvances ? (
-            <>
-              <div className="flex justify-between text-muted-foreground">
-                <span>Adelantos descontados</span>
-                <span className="tabular">− {formatMoney(BigInt(view.totalAdvancesCents))}</span>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <span>A entregar en sobres</span>
-                <span className="tabular">{formatMoney(BigInt(view.totalFinalCents))}</span>
-              </div>
-            </>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Adelantos descontados</span>
+              <span className="tabular">− {formatMoney(BigInt(view.totalAdvancesCents))}</span>
+            </div>
+          ) : null}
+          {hasAdvances || sectorOnly > 0n ? (
+            <div className="flex justify-between font-semibold">
+              <span>A entregar en sobres</span>
+              <span className="tabular">
+                {formatMoney(BigInt(view.totalFinalCents) - sectorOnly)}
+              </span>
+            </div>
           ) : null}
         </div>
       </Card>
@@ -166,9 +177,10 @@ export function ClosedPeriod({
         <section className="mt-4 rounded-xl border bg-card p-4">
           <h2 className="mb-1 font-medium">Reparto por sectores</h2>
           <p className="mb-3 text-sm text-muted-foreground">
-            Cuánto recibió cada sector y sobre qué base se calculó cada porcentaje.
+            Paso a paso: sobre qué monto se calculó cada porcentaje, cuánto recibió cada sector y
+            cuánto quedó.
           </p>
-          <SectorBreakdown stages={view.sectorStages} />
+          <SectorBreakdown summary={view.sectorStages} />
         </section>
       ) : null}
 

@@ -49,7 +49,7 @@ import type {
   PolicyVersionView,
 } from '@/lib/policy/view';
 import { cn } from '@/lib/utils';
-import { SectorStagesEditor } from './sector-stages-editor';
+import { SectorStepsEditor } from './sector-steps-editor';
 
 const WHEN = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 const when = (iso: string) => (iso ? WHEN.format(new Date(iso)) : '—');
@@ -155,7 +155,7 @@ export function DistributionConfigView({
       ) : null}
 
       <PositionsEditor view={view} canEdit={canEdit} actions={actions} />
-      <SectorStagesEditor view={view} canEdit={canEdit} actions={actions} />
+      <SectorStepsEditor view={view} canEdit={canEdit} actions={actions} />
 
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
         {PARAMS.map((param) => (

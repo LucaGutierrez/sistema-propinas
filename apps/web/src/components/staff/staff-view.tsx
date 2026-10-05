@@ -10,13 +10,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import { methodUses } from '@/lib/distribution/participation';
 import { formatPortion } from '@/lib/policy/portion-format';
 import type { StaffActions, StaffMemberView, StaffView as StaffViewModel } from '@/lib/staff/view';
 import { cn } from '@/lib/utils';
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 md:text-sm';
 
 function Initials({ name, muted }: { name: string; muted?: boolean }) {
   const initials = name
@@ -206,7 +204,7 @@ function StaffRow({
       {editing ? (
         <select
           aria-label={`Puesto de ${member.name}`}
-          className={cn(SELECT_CLASS, 'w-40')}
+          className={cn(nativeSelectClass, 'w-40')}
           value={member.positionId}
           onChange={(event) => {
             const positionId = event.target.value;
@@ -333,7 +331,7 @@ function AddStaffForm({ view, actions }: { view: StaffViewModel; actions: StaffA
             ) : null}
             <select
               id="puesto"
-              className={SELECT_CLASS}
+              className={nativeSelectClass}
               value={positionId}
               disabled={noPositions}
               onChange={(event) => setPositionId(event.target.value)}

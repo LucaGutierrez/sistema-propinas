@@ -15,41 +15,37 @@ import {
 } from '@/lib/demo-store/config';
 import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
 import {
-  checkStages,
-  formatStagePercent,
-  parseStagePercent,
-  stagesSummary,
-  type SectorAssignment,
-} from '@/lib/distribution/sector-stages';
+  checkSectors,
+  formatSectorPercent,
+  parseSectorPercent,
+  sectorInputs,
+  sectorsSummary,
+  type PolicySector,
+  type SectorBase,
+} from '@/lib/distribution/sector-steps';
 
 /** Un puesto dentro de una versión: identidad estable (`id`), nombre y porción ("0,022"). */
 export interface PolicyPosition {
   id: string;
   name: string;
   factor: string;
-  /** Reparto por sectores: etapa del puesto; null/ausente = sin asignar. */
+  /** Formato anterior del reparto por sectores: etapa del puesto; null/ausente = sin asignar. */
   stage?: number | null;
-  /** Reparto por sectores: porcentaje de su etapa ("30", "12,5"); null/ausente = sin cargar. */
+  /** Formato anterior: porcentaje de su etapa ("30", "12,5"); null/ausente = sin cargar. */
   stagePercent?: string | null;
+  /** Reparto por sectores: id del sector (de `PolicyDraft.sectors`) en el que cobra. */
+  sectorId?: string | null;
 }
 
-/** Valor de `groups` que reparte por sectores, en etapas. */
+/** Valor de `groups` que reparte por sectores. */
 export const STAGED_GROUPS = 'PORCENTAJE_POR_GRUPO';
-
-/** Los puestos de una versión como sectores (para validar y calcular las etapas). */
-export function sectorAssignments(positions: readonly PolicyPosition[]): SectorAssignment[] {
-  return positions.map((p) => ({
-    id: p.id,
-    name: p.name,
-    stage: p.stage ?? null,
-    percent: p.stagePercent ?? null,
-  }));
-}
 
 /** Lo que define una versión de la política (sin número, autor ni fecha). */
 export interface PolicyDraft {
   values: DistributionConfig;
   positions: PolicyPosition[];
+  /** Reparto por sectores: sectores en orden. Ausente o vacío = sin sectores propios. */
+  sectors?: PolicySector[];
 }
 
 export type PolicyChangePlan =
@@ -83,18 +79,21 @@ export function planConfigValue(
   if (previous === value) return fail('Ese ya es el valor vigente.');
   // Repartir por sectores sin etapas completas dejaría una configuración que no calcula.
   if (key === 'groups' && value === STAGED_GROUPS) {
-    const check = checkStages(sectorAssignments(current.positions));
+    const check = checkSectors(
+      sectorInputs(current.sectors ?? [], current.positions),
+      current.positions,
+    );
     if (!check.ok) {
       return fail(
-        'Para repartir por sectores, primero asigná a cada puesto su etapa y porcentaje en "Reparto por sectores" y guardalo.',
+        'Para repartir por sectores, primero armá los sectores en "Reparto por sectores" y guardalos.',
       );
     }
   }
   return {
     ok: true,
     draft: {
+      ...current,
       values: { ...current.values, [key]: value } as DistributionConfig,
-      positions: current.positions,
     },
     summary: `${definition.label}: ${optionLabel(key, previous)} → ${optionLabel(key, value)}`,
   };
@@ -113,7 +112,7 @@ export function planAddPosition(current: PolicyDraft, position: PolicyPosition):
   return {
     ok: true,
     draft: {
-      values: current.values,
+      ...current,
       positions: [...current.positions, { id: position.id, name, factor }],
     },
     summary: `Nuevo puesto: ${name} (porción ${factor})`,
@@ -136,66 +135,102 @@ export function planPortionChange(
   return {
     ok: true,
     draft: {
-      values: current.values,
+      ...current,
       positions: current.positions.map((p) => (p.id === positionId ? { ...p, factor: next } : p)),
     },
     summary: `${position.name}: porción ${position.factor} → ${next}`,
   };
 }
 
-export interface StageInput {
-  positionId: string;
-  stage: number | null;
+/** Un sector como lo manda la pantalla, con los puestos que incluye. */
+export interface SectorEdit {
+  name: string;
+  base: SectorBase;
   percent: string;
+  positionIds: string[];
 }
 
+/** Ids de los sectores del borrador (la fuente de datos les da su id definitivo al guardar). */
+export const draftSectorId = (index: number) => `sector-${index + 1}`;
+
 /**
- * Guarda las etapas y porcentajes de TODOS los puestos de una vez y activa el reparto por sectores.
- * Solo acepta una configuración completa que cierre (lo valida `checkStages`): nunca queda una
- * versión por sectores que no se pueda calcular.
+ * Guarda TODOS los sectores de una vez (orden, nombre, base, % y puestos) y activa el reparto por
+ * sectores. Solo acepta una configuración completa en la que ningún sector pida más de lo que
+ * queda (lo valida `checkSectors`): nunca queda una versión por sectores que no se pueda calcular.
+ * Lo que sobre después del último sector se puede guardar (se muestra como sin asignar y el
+ * reparto no se cierra hasta resolverlo).
  */
-export function planStagesChange(
+export function planSectorsChange(
   current: PolicyDraft,
-  inputs: readonly StageInput[],
+  edits: readonly SectorEdit[],
 ): PolicyChangePlan {
-  const byId = new Map(inputs.map((i) => [i.positionId, i]));
-  if (inputs.some((i) => !current.positions.some((p) => p.id === i.positionId))) {
+  const known = new Set(current.positions.map((p) => p.id));
+  if (edits.some((e) => e.positionIds.some((id) => !known.has(id)))) {
     return fail('Uno de los puestos ya no existe: recargá la página.');
   }
-  const positions = current.positions.map((p) => {
-    const input = byId.get(p.id);
-    const percentE2 = input ? parseStagePercent(input.percent) : null;
+  const sectors: PolicySector[] = edits.map((e, index) => {
+    const percentE2 = parseSectorPercent(e.percent);
     return {
-      ...p,
-      stage: input ? input.stage : (p.stage ?? null),
+      id: draftSectorId(index),
+      name: e.name.trim(),
+      base: index === 0 ? 'TOTAL' : e.base,
       // Se guarda normalizado ("12,50" → "12,5"); lo inválido queda como se escribió para el error.
-      stagePercent: input
-        ? percentE2 !== null
-          ? formatStagePercent(percentE2)
-          : input.percent
-        : (p.stagePercent ?? null),
+      percent: percentE2 !== null ? formatSectorPercent(percentE2) : e.percent,
     };
   });
-  const check = checkStages(sectorAssignments(positions));
+  const sectorOf = new Map<string, string>();
+  edits.forEach((e, index) => {
+    for (const id of e.positionIds) if (!sectorOf.has(id)) sectorOf.set(id, draftSectorId(index));
+  });
+  const inputs = sectors.map((s, index) => ({
+    ...s,
+    positionIds: edits[index]?.positionIds ?? [],
+  }));
+  const check = checkSectors(inputs, current.positions);
   if (!check.ok) return fail(check.errors.join(' '));
-  const unchanged =
-    current.values.groups === STAGED_GROUPS &&
-    positions.every((p, index) => {
-      const before = current.positions[index];
-      return (
-        before !== undefined &&
-        (before.stage ?? null) === p.stage &&
-        parseStagePercent(before.stagePercent) === parseStagePercent(p.stagePercent)
-      );
-    });
-  if (unchanged) return fail('Esa ya es la configuración vigente.');
-  const summary = `Reparto por sectores: ${stagesSummary(check.stages)}`;
+  // El formato anterior (etapa por puesto) deja de usarse en esta versión.
+  const positions = current.positions.map((p) => ({
+    ...p,
+    stage: null,
+    stagePercent: null,
+    sectorId: sectorOf.get(p.id) ?? null,
+  }));
+  if (current.values.groups === STAGED_GROUPS && sameSectors(current, sectors, positions)) {
+    return fail('Esa ya es la configuración vigente.');
+  }
+  const names = new Map(current.positions.map((p) => [p.id, p.name]));
+  const summary = `Reparto por sectores: ${sectorsSummary(check.sectors, (id) => names.get(id) ?? '—')}`;
   return {
     ok: true,
-    draft: { values: { ...current.values, groups: STAGED_GROUPS }, positions },
+    draft: { values: { ...current.values, groups: STAGED_GROUPS }, positions, sectors },
     summary:
       current.values.groups === STAGED_GROUPS
         ? summary
-        : `Grupos y porcentajes: Sin grupos → Por sectores, en etapas. ${summary}`,
+        : `Grupos y porcentajes: Sin grupos → Por sectores. ${summary}`,
   };
+}
+
+/** Misma configuración por sectores (orden, nombre, base, % y puestos de cada uno). */
+function sameSectors(
+  current: PolicyDraft,
+  sectors: readonly PolicySector[],
+  positions: readonly PolicyPosition[],
+): boolean {
+  const before = current.sectors ?? [];
+  if (before.length !== sectors.length) return false;
+  const key = (list: readonly PolicySector[], ps: readonly PolicyPosition[]) =>
+    list.map((s) =>
+      JSON.stringify([
+        s.name,
+        s.base,
+        String(parseSectorPercent(s.percent)),
+        ps
+          .filter((p) => p.sectorId === s.id)
+          .map((p) => p.id)
+          .sort(),
+      ]),
+    );
+  const a = key(before, current.positions);
+  const b = key(sectors, positions);
+  return a.every((value, index) => value === b[index]);
 }

@@ -162,6 +162,12 @@ describe('migraciones (prisma/migrations)', () => {
     expect(migrationSql(staged ?? '').endsWith(sqlFile('0005_staged_sectors.sql'))).toBe(true);
   });
 
+  it('la migración de sectores propios termina con una copia literal de sql/0007_sector_groups.sql', () => {
+    const groups = migrationNames().find((name) => name.endsWith('_sector_groups'));
+    expect(groups).toBeDefined();
+    expect(migrationSql(groups ?? '').endsWith(sqlFile('0007_sector_groups.sql'))).toBe(true);
+  });
+
   it('la migración de feedback termina con una copia literal de sql/0006_feedback.sql', () => {
     const feedback = migrationNames().find((name) => name.endsWith('_feedback'));
     expect(feedback).toBeDefined();

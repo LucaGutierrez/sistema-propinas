@@ -110,14 +110,25 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
             los adelantos descontados vuelven a quedar pendientes. Después podés rehacer la semana
             con los datos correctos.
           </p>
-          <Input
-            aria-label="Motivo de la eliminación"
-            placeholder={`Por qué lo eliminás (mínimo ${MIN_REASON} caracteres)`}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            autoFocus
-          />
-          <div className="flex flex-wrap gap-2">
+          <div>
+            <label htmlFor="void-reason" className="mb-1 block font-medium">
+              Motivo
+            </label>
+            <Input
+              id="void-reason"
+              placeholder="Por qué lo eliminás"
+              value={reason}
+              aria-describedby="void-reason-help"
+              onChange={(e) => setReason(e.target.value)}
+              autoFocus
+            />
+            <p id="void-reason-help" className="mt-1 text-xs text-muted-foreground">
+              {reason.trim().length < MIN_REASON
+                ? `Escribí al menos ${MIN_REASON} caracteres (faltan ${MIN_REASON - reason.trim().length}).`
+                : 'Listo: queda guardado junto con la anulación.'}
+            </p>
+          </div>
+          <div className="grid gap-2 sm:flex sm:flex-wrap">
             <Button
               variant="outline"
               onClick={() => {
@@ -135,7 +146,7 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
               disabled={busy || reason.trim().length < MIN_REASON}
             >
               {busy ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
-              Sí, eliminar reparto
+              {busy ? 'Eliminando…' : 'Sí, eliminar reparto'}
             </Button>
           </div>
         </div>

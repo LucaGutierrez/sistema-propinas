@@ -53,7 +53,7 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
       <div>
         <Link
           href="/historial"
-          className="mb-4 flex items-center gap-1.5 text-sm text-primary hover:underline"
+          className="mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm text-primary hover:underline md:mb-4 md:min-h-0"
         >
           <ArrowLeftIcon className="size-4" />
           Historial
@@ -134,7 +134,7 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
           <Tile label="Adelantos descontados" value={money(totals.advancesCents)} />
           <Tile label="Personas" value={String(totals.participants)} />
           {detail.sectorStages ? (
-            <Tile label="Cálculo" value="Por sectores, en etapas" />
+            <Tile label="Cálculo" value="Por sectores" />
           ) : (
             <Tile
               label="Ponderado · valor de 1"
@@ -151,13 +151,13 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
           <CardHeader>
             <CardTitle>Resultado por sector</CardTitle>
             <p className="text-sm text-muted-foreground">
-              La configuración aplicada al cerrar (etapa, base y porcentaje de cada sector) y lo que
+              La configuración aplicada al cerrar (base y porcentaje de cada sector) y lo que
               recibió cada uno. Dentro de cada sector se repartió entre su gente según el detalle
               por persona.
             </p>
           </CardHeader>
           <CardContent>
-            <SectorBreakdown stages={detail.sectorStages} />
+            <SectorBreakdown summary={detail.sectorStages} />
           </CardContent>
         </Card>
       ) : null}

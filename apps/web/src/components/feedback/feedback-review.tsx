@@ -16,6 +16,7 @@ import { deleteFeedbackAction, setFeedbackStatusAction } from '@/app/feedback/ac
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import {
   CATEGORY_LABEL,
   FEEDBACK_CATEGORIES,
@@ -35,9 +36,6 @@ const dateTime = new Intl.DateTimeFormat('es-AR', {
   timeStyle: 'short',
   timeZone: 'America/Argentina/Buenos_Aires',
 });
-
-const SELECT_CLASS =
-  'h-8 rounded-md border border-input bg-card px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-60';
 
 /** Cada tipo con su ícono y color: los errores se distinguen a primera vista. */
 const CATEGORY_STYLE: Record<FeedbackCategory, { icon: LucideIcon; className: string }> = {
@@ -76,7 +74,7 @@ function FilterLink({
       href={href}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'rounded-full border px-3 py-1 text-sm transition-colors',
+        'inline-flex min-h-10 items-center rounded-full border px-3.5 text-sm transition-colors md:min-h-8',
         active ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted/60',
       )}
     >
@@ -108,7 +106,7 @@ export function FeedbackReview({
 
       <div className="mb-4 space-y-3 rounded-xl border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2" aria-label="Filtrar por tipo">
-          <span className="w-14 text-xs text-muted-foreground">Tipo</span>
+          <span className="w-full text-xs font-medium text-muted-foreground sm:w-14">Tipo</span>
           <FilterLink href={feedbackHref({ status: filters.status })} active={!filters.category}>
             Todos ({total})
           </FilterLink>
@@ -123,7 +121,7 @@ export function FeedbackReview({
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2" aria-label="Filtrar por estado">
-          <span className="w-14 text-xs text-muted-foreground">Estado</span>
+          <span className="w-full text-xs font-medium text-muted-foreground sm:w-14">Estado</span>
           <FilterLink href={feedbackHref({ category: filters.category })} active={!filters.status}>
             Todos
           </FilterLink>
@@ -164,7 +162,7 @@ export function FeedbackReview({
       )}
 
       {filters.page > 1 || list.hasMore ? (
-        <div className="mt-4 flex justify-between">
+        <div className="mt-4 flex justify-between gap-2">
           {filters.page > 1 ? (
             <Button asChild variant="outline" size="sm">
               <Link href={feedbackHref(filters, filters.page - 1)}>Más recientes</Link>
@@ -224,14 +222,14 @@ function FeedbackCard({ item }: { item: FeedbackItem }) {
       {item.title ? <p className="mt-2 font-medium">{item.title}</p> : null}
       <p className="mt-1 text-sm whitespace-pre-wrap">{item.description}</p>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-        <div className="flex items-center gap-2 text-sm">
+      <div className="mt-3 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <label htmlFor={`status-${item.id}`} className="text-muted-foreground">
             Estado
           </label>
           <select
             id={`status-${item.id}`}
-            className={SELECT_CLASS}
+            className={cn(nativeSelectClass, 'min-w-0 flex-1 sm:w-auto sm:flex-none')}
             value={item.status}
             disabled={pending}
             onChange={(e) => {
@@ -249,34 +247,46 @@ function FeedbackCard({ item }: { item: FeedbackItem }) {
             <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" />
           ) : null}
           {item.statusChangedAt && item.statusChangedBy ? (
-            <span className="hidden text-xs text-muted-foreground sm:inline">
+            <span className="w-full text-xs text-muted-foreground sm:w-auto">
               por {item.statusChangedBy}, {dateTime.format(new Date(item.statusChangedAt))}
             </span>
           ) : null}
         </div>
         {confirming ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="Confirmar borrado"
+            className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 sm:flex sm:items-center sm:border-0 sm:bg-transparent sm:p-0"
+          >
             <span className="text-sm">¿Borrar este comentario? No se puede deshacer.</span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => setConfirming(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={pending}
-              onClick={() => run(() => deleteFeedbackAction(item.id))}
-            >
-              <Trash2Icon />
-              Sí, borrar
-            </Button>
+            <div className="grid grid-cols-2 gap-2 sm:flex">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => setConfirming(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={pending}
+                onClick={() => run(() => deleteFeedbackAction(item.id))}
+              >
+                {pending ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
+                Sí, borrar
+              </Button>
+            </div>
           </div>
         ) : (
-          <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="self-start text-muted-foreground sm:self-auto"
+            disabled={pending}
+            onClick={() => setConfirming(true)}
+          >
             <Trash2Icon />
             Borrar
           </Button>

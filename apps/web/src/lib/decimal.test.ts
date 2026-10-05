@@ -34,11 +34,11 @@ describe('parseMoney', () => {
 
 describe('formato', () => {
   it('usa separadores es-AR y redondea half-up', () => {
-    expect(formatMoney(4_143_581n)).toBe('$ 41.435,81');
-    expect(formatMoneyShort(4_143_581n)).toBe('$ 41.436');
-    expect(formatMoneyShort(34_799_000n)).toBe('$ 347.990');
+    expect(formatMoney(4_143_581n)).toBe('$\u00a041.435,81');
+    expect(formatMoneyShort(4_143_581n)).toBe('$\u00a041.436');
+    expect(formatMoneyShort(34_799_000n)).toBe('$\u00a0347.990');
     expect(formatScaled(630_000n, 6, 3)).toBe('0,630');
     expect(formatScaled(1167n, 2, 2)).toBe('11,67');
-    expect(formatMoney(-150n)).toBe('-$ 1,50');
+    expect(formatMoney(-150n)).toBe('-$\u00a01,50');
   });
 });

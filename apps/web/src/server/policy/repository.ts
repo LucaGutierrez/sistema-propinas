@@ -28,8 +28,19 @@ export interface PolicyPositionRecord {
   sortOrder: number;
   /** Reparto por sectores: etapa del puesto (null sin asignar). */
   stage: number | null;
-  /** Reparto por sectores: porcentaje como se muestra ("12,5"; null sin asignar). */
+  /** Formato anterior del reparto por sectores: % como se muestra ("12,5"; null sin asignar). */
   stagePercent: string | null;
+  /** Reparto por sectores: sector de la versión en el que cobra (null = ninguno). */
+  sectorId: string | null;
+}
+
+export interface PolicySectorRecord {
+  id: string;
+  name: string;
+  sortOrder: number;
+  base: 'TOTAL' | 'REMAINDER';
+  /** Porcentaje como se muestra ("12,5"). */
+  percent: string;
 }
 
 export interface PolicyVersionRecord {
@@ -48,6 +59,8 @@ export interface PolicyVersionRecord {
   columns: PolicyColumns;
   values: DistributionConfig;
   positions: PolicyPositionRecord[];
+  /** Reparto por sectores: sectores en orden (vacío sin sectores propios). */
+  sectors: PolicySectorRecord[];
 }
 
 const versionSelect = {
@@ -81,9 +94,14 @@ const versionSelect = {
       sortOrder: true,
       stage: true,
       stagePercent: true,
+      sectorId: true,
       position: { select: { name: true } },
     },
     orderBy: [{ sortOrder: 'asc' }, { positionId: 'asc' }],
+  },
+  sectors: {
+    select: { id: true, name: true, sortOrder: true, base: true, percent: true },
+    orderBy: { sortOrder: 'asc' },
   },
 } satisfies Prisma.DistributionPolicyVersionSelect;
 
@@ -129,8 +147,16 @@ function toRecord(row: VersionRow): PolicyVersionRecord {
         sortOrder: p.sortOrder,
         stage: p.stage,
         stagePercent: p.stagePercent ? stagePercentFromDb(p.stagePercent.toFixed(2)) : null,
+        sectorId: p.sectorId,
       };
     }),
+    sectors: row.sectors.map((s) => ({
+      id: s.id,
+      name: s.name,
+      sortOrder: s.sortOrder,
+      base: s.base,
+      percent: stagePercentFromDb(s.percent.toFixed(2)),
+    })),
   };
 }
 
@@ -225,6 +251,13 @@ function toView(record: PolicyVersionRecord, closedPeriods: number): PolicyVersi
       factor: p.factor,
       stage: p.stage,
       stagePercent: p.stagePercent,
+      sectorId: p.sectorId,
+    })),
+    sectors: record.sectors.map((s) => ({
+      id: s.id,
+      name: s.name,
+      base: s.base,
+      percent: s.percent,
     })),
     closedPeriods,
   };

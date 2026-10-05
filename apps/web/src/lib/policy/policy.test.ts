@@ -5,7 +5,7 @@ import {
   planAddPosition,
   planConfigValue,
   planPortionChange,
-  planStagesChange,
+  planSectorsChange,
   STAGED_GROUPS,
   type PolicyDraft,
 } from './changes';
@@ -169,68 +169,84 @@ describe('traducción a la base', () => {
   });
 });
 
-describe('reparto por sectores (etapas)', () => {
-  const stages = (draft: PolicyDraft, percents: Record<string, [number, string]>) =>
-    planStagesChange(
-      draft,
-      draft.positions.map((p) => ({
-        positionId: p.id,
-        stage: percents[p.name]?.[0] ?? null,
-        percent: percents[p.name]?.[1] ?? '',
-      })),
-    );
+describe('reparto por sectores', () => {
+  const ids = (draft: PolicyDraft, ...names: string[]) =>
+    draft.positions.filter((p) => names.includes(p.name)).map((p) => p.id);
+  /** Cocina 30 % del total (sin puestos), Salón 50 % del saldo y Bacha el resto. */
+  const pedido = (draft: PolicyDraft) =>
+    planSectorsChange(draft, [
+      { name: 'Cocina', base: 'TOTAL', percent: '30', positionIds: [] },
+      {
+        name: 'Salón',
+        base: 'REMAINDER',
+        percent: '50,00',
+        positionIds: ids(draft, 'Salón', 'Supervisor', 'Barra'),
+      },
+      { name: 'Bacha', base: 'REMAINDER', percent: '100', positionIds: ids(draft, 'Bacha') },
+    ]);
 
-  it('no se activa desde el selector sin etapas completas', () => {
+  it('no se activa desde el selector sin sectores', () => {
     expect(planConfigValue(standard(), 'groups', STAGED_GROUPS)).toEqual({
       ok: false,
       error:
-        'Para repartir por sectores, primero asigná a cada puesto su etapa y porcentaje en "Reparto por sectores" y guardalo.',
+        'Para repartir por sectores, primero armá los sectores en "Reparto por sectores" y guardalos.',
     });
   });
 
-  it('guarda todas las etapas juntas, activa los sectores y resume la configuración', () => {
-    const plan = stages(standard(), {
-      Supervisor: [1, '20'],
-      Barra: [2, '40'],
-      Salón: [2, '60'],
-      Bacha: [1, '10'],
-    });
+  it('guarda todos los sectores juntos, con sus puestos, y activa el reparto por sectores', () => {
+    const plan = pedido(standard());
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     expect(plan.draft.values.groups).toBe(STAGED_GROUPS);
+    expect(plan.draft.sectors).toEqual([
+      { id: 'sector-1', name: 'Cocina', base: 'TOTAL', percent: '30' },
+      { id: 'sector-2', name: 'Salón', base: 'REMAINDER', percent: '50' },
+      { id: 'sector-3', name: 'Bacha', base: 'REMAINDER', percent: '100' },
+    ]);
+    expect(Object.fromEntries(plan.draft.positions.map((p) => [p.name, p.sectorId]))).toEqual({
+      Supervisor: 'sector-2',
+      Barra: 'sector-2',
+      Salón: 'sector-2',
+      Bacha: 'sector-3',
+    });
     expect(plan.summary).toBe(
-      'Grupos y porcentajes: Sin grupos → Por sectores, en etapas. Reparto por sectores: Etapa 1 (sobre el total): Supervisor 20 %, Bacha 10 % · Etapa 2 (sobre el saldo restante): Barra 40 %, Salón 60 %',
+      'Grupos y porcentajes: Sin grupos → Por sectores. Reparto por sectores: Cocina 30 % del total · Salón 50 % del saldo (Supervisor, Barra, Salón) · Bacha 100 % del saldo (Bacha)',
     );
     // Guardar lo mismo otra vez no crea una versión.
-    const again = planStagesChange(
-      plan.draft,
-      plan.draft.positions.map((p) => ({
-        positionId: p.id,
-        stage: p.stage ?? null,
-        percent: p.stagePercent ?? '',
-      })),
-    );
-    expect(again).toEqual({ ok: false, error: 'Esa ya es la configuración vigente.' });
-    // Ya completas, también se pueden volver a elegir desde el selector.
+    expect(pedido(plan.draft)).toEqual({ ok: false, error: 'Esa ya es la configuración vigente.' });
+    // Otros cambios conservan los sectores.
+    const portion = planPortionChange(plan.draft, ids(plan.draft, 'Barra')[0] ?? '', '0,03');
+    expect(portion.ok && portion.draft.sectors).toEqual(plan.draft.sectors);
+    // Ya completos, también se pueden volver a elegir desde el selector.
     const back = planConfigValue(plan.draft, 'groups', 'SIN_GRUPOS');
     expect(back.ok).toBe(true);
     if (back.ok) expect(planConfigValue(back.draft, 'groups', STAGED_GROUPS).ok).toBe(true);
   });
 
-  it('rechaza configuraciones incompletas o que no cierran', () => {
-    expect(stages(standard(), { Supervisor: [1, '30'] })).toMatchObject({ ok: false });
+  it('rechaza configuraciones incompletas o que piden más de lo que queda', () => {
+    const draft = standard();
     expect(
-      stages(standard(), {
-        Supervisor: [1, '30'],
-        Barra: [2, '50'],
-        Salón: [2, '40'],
-        Bacha: [2, 'x'],
-      }),
+      planSectorsChange(draft, [{ name: 'Cocina', base: 'TOTAL', percent: 'x', positionIds: [] }]),
     ).toEqual({
       ok: false,
       error:
-        'Bacha: el porcentaje tiene que ser un número mayor que 0 y hasta 100 (hasta 2 decimales).',
+        'Cocina: el porcentaje tiene que ser un número mayor que 0 y hasta 100 (hasta 2 decimales).',
     });
+    expect(
+      planSectorsChange(draft, [
+        { name: 'Cocina', base: 'TOTAL', percent: '70', positionIds: [] },
+        { name: 'Bacha', base: 'TOTAL', percent: '40', positionIds: [] },
+      ]),
+    ).toEqual({
+      ok: false,
+      error:
+        'Bacha pide el 40 % del total, pero en ese paso solo queda el 30 % del total. Bajá su porcentaje o calculalo sobre el saldo.',
+    });
+    expect(
+      planSectorsChange(draft, [
+        { name: 'Cocina', base: 'TOTAL', percent: '30', positionIds: ['otro-restaurante'] },
+      ]),
+    ).toEqual({ ok: false, error: 'Uno de los puestos ya no existe: recargá la página.' });
   });
 
   it('el porcentaje de etapa se guarda en la base con 2 decimales', () => {

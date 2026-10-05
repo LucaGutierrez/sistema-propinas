@@ -4,7 +4,7 @@
  */
 import type { ParamKey } from '@/lib/demo-store/config';
 import type { PolicyVersion } from '@/lib/demo-store/policy';
-import type { StageInput } from './changes';
+import type { SectorEdit } from './changes';
 import type { PortionDisplay } from './portion-format';
 
 export interface PolicyVersionView extends PolicyVersion {
@@ -34,8 +34,8 @@ export interface DistributionConfigActions {
   /** Cambia cómo se muestran las porciones (no crea versión). Sin esta acción no se ofrece. */
   setPortionDisplay?(display: PortionDisplay): Promise<string | null>;
   /**
-   * Guarda etapa y porcentaje de todos los puestos y activa el reparto por sectores (crea una
-   * versión). Solo con la base de datos: sin esta acción no se ofrece.
+   * Guarda todos los sectores (nombre, base, % y puestos) y activa el reparto por sectores (crea
+   * una versión). Solo con la base de datos: sin esta acción no se ofrece.
    */
-  setStages?(stages: StageInput[]): Promise<string | null>;
+  setSectors?(sectors: SectorEdit[]): Promise<string | null>;
 }

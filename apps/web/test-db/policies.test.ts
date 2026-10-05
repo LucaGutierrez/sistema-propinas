@@ -187,6 +187,79 @@ describe('puestos de una versión (porción)', () => {
     },
   );
 
+  /** Versión 2 con un sector y un puesto dentro (el sector se inserta antes que el puesto). */
+  const SECTOR = uuid(61);
+  const sectorVersion = (sector = `'${SECTOR}', '${V2}', 'Salón', 1, 'REMAINDER', 50`) =>
+    policyVersion(V2, { number: 2, origin: 'CHANGE', previous: ID.V1 }) +
+    `INSERT INTO policy_version_sectors (id, version_id, name, sort_order, base, percent)
+       VALUES (${sector});
+     INSERT INTO policy_version_positions (version_id, position_id, portion, sector_id)
+       VALUES ('${V2}', '${ID.P1}', 0.022, '${SECTOR}');`;
+
+  it('reparto por sectores: un sector con nombre, orden, base, % y sus puestos', async () => {
+    await db.exec(sectorVersion());
+    const [row] = await db.rows<{ name: string; base: string; percent: string; puesto: string }>(
+      `SELECT s.name, s.base::text AS base, s.percent::text AS percent,
+              p.position_id::text AS puesto
+       FROM policy_version_sectors s JOIN policy_version_positions p ON p.sector_id = s.id
+       WHERE s.version_id = '${V2}'`,
+    );
+    expect(row).toEqual({ name: 'Salón', base: 'REMAINDER', percent: '50.00', puesto: ID.P1 });
+  });
+
+  it.each([
+    [`'${uuid(61)}', '${uuid(51)}', '  ', 1, 'TOTAL', 30`, /ck_pvs_name/],
+    [`'${uuid(61)}', '${uuid(51)}', 'Cocina', 0, 'TOTAL', 30`, /ck_pvs_sort_order/],
+    [`'${uuid(61)}', '${uuid(51)}', 'Cocina', 1, 'TOTAL', 0`, /ck_pvs_percent/],
+    [`'${uuid(61)}', '${uuid(51)}', 'Cocina', 1, 'TOTAL', 100.01`, /ck_pvs_percent/],
+  ])('reparto por sectores: el sector (%s) se rechaza', async (sector, error) => {
+    await db.fails(sectorVersion(sector), error);
+  });
+
+  it('dos sectores de una versión no se llaman igual', async () => {
+    await db.fails(
+      sectorVersion() +
+        `INSERT INTO policy_version_sectors (version_id, name, sort_order, base, percent)
+           VALUES ('${V2}', ' salón ', 2, 'REMAINDER', 100);`,
+      /ux_pvs_version_name/,
+    );
+  });
+
+  it('un puesto usa sector o etapa, nunca los dos', async () => {
+    await db.fails(
+      policyVersion(V2, { number: 2, origin: 'CHANGE', previous: ID.V1 }) +
+        `INSERT INTO policy_version_sectors (id, version_id, name, sort_order, base, percent)
+           VALUES ('${SECTOR}', '${V2}', 'Salón', 1, 'TOTAL', 50);
+         INSERT INTO policy_version_positions
+           (version_id, position_id, portion, sector_id, stage, stage_percent)
+           VALUES ('${V2}', '${ID.P1}', 0.022, '${SECTOR}', 1, 30);`,
+      /ck_pvp_sector_or_stage/,
+    );
+  });
+
+  it('el sector de un puesto es de la misma versión', async () => {
+    await db.exec(sectorVersion());
+    await db.fails(
+      policyVersion(uuid(53), { number: 3, origin: 'CHANGE', previous: V2 }) +
+        `INSERT INTO policy_version_positions (version_id, position_id, portion, sector_id)
+           VALUES ('${uuid(53)}', '${ID.P1}', 0.022, '${SECTOR}');`,
+      /the sector must belong to the same policy version/,
+    );
+  });
+
+  it('los sectores de una versión no se agregan después ni se editan', async () => {
+    // La versión 1 se creó en otra transacción (la del armado del test).
+    await db.fails(
+      `INSERT INTO policy_version_sectors (version_id, name, sort_order, base, percent)
+         VALUES ('${ID.V1}', 'Bacha', 2, 'REMAINDER', 100);`,
+      /sectors can only be added to a policy version in the transaction that creates it/,
+    );
+    await db.exec(sectorVersion());
+    const appendOnly = /IMMUTABLE: policy_version_sectors is append-only/;
+    await db.fails(`UPDATE policy_version_sectors SET percent = 60;`, appendOnly);
+    await db.fails(`DELETE FROM policy_version_sectors;`, appendOnly);
+  });
+
   it('la porción guarda 10 decimales exactos (0,65/45 = 0,0144444444)', async () => {
     await db.exec(newVersion);
     const [row] = await db.rows<{ portion: string }>(

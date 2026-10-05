@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { nativeSelectClass } from '@/components/ui/native-select';
 import { formatDayMonth, formatWeekday, todayIso, weekDays } from '@/lib/dates';
 import { formatMoney } from '@/lib/decimal';
 import { addAdvance, voidAdvance } from '@/lib/demo-store/advances';
@@ -14,9 +15,6 @@ import { MIN_REASON_LENGTH } from '@/lib/demo-store/envelopes';
 import { activeAdvances, type AdvanceEntry, type Venue, type Week } from '@/lib/demo-store/model';
 import { newId, useDemoStore } from '@/lib/demo-store/store';
 import { cn } from '@/lib/utils';
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 md:text-sm';
 
 const WHEN = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 const when = (iso?: string) => (iso ? WHEN.format(new Date(iso)) : '');
@@ -234,7 +232,7 @@ function AddAdvanceForm({ venue, week }: { venue: Venue; week: Week }) {
           <Label htmlFor="adelanto-persona">Persona</Label>
           <select
             id="adelanto-persona"
-            className={SELECT_CLASS}
+            className={nativeSelectClass}
             value={staffId}
             onChange={(event) => {
               setStaffId(event.target.value);
@@ -253,7 +251,7 @@ function AddAdvanceForm({ venue, week }: { venue: Venue; week: Week }) {
           <Label htmlFor="adelanto-fecha">Fecha</Label>
           <select
             id="adelanto-fecha"
-            className={cn(SELECT_CLASS, 'capitalize')}
+            className={cn(nativeSelectClass, 'capitalize')}
             value={date}
             onChange={(event) => setDate(event.target.value)}
           >

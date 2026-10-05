@@ -4,7 +4,7 @@
  * reconstruye con la configuración actual. Importes como texto de centavos.
  */
 import type { ParticipationMethod } from '@/lib/distribution/participation';
-import type { SectorStageView } from '@/lib/distribution/sector-snapshot';
+import type { SectorsSummary } from '@/lib/distribution/sector-snapshot';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
 import type { EnvelopeEventType, EnvelopeStatus } from '@/lib/envelopes/view';
 
@@ -120,7 +120,7 @@ export interface HistoryDetail {
    * Reparto por sectores guardado al cerrar: configuración aplicada (etapa, base y % de cada
    * sector) y resultado por sector. null con pozo único o para SELF (revelaría los totales).
    */
-  sectorStages: SectorStageView[] | null;
+  sectorStages: SectorsSummary | null;
   /** Totales del reparto (null para SELF: no se revelan). */
   totals: {
     tipsCents: string;

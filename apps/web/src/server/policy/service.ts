@@ -19,10 +19,10 @@ import {
   planAddPosition,
   planConfigValue,
   planPortionChange,
-  planStagesChange,
+  planSectorsChange,
   type PolicyChangePlan,
-  type StageInput,
   type PolicyDraft,
+  type SectorEdit,
 } from '@/lib/policy/changes';
 import { portionToDb, stagePercentToDb, valuesToColumns } from '@/lib/policy/db-mapping';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
@@ -41,7 +41,7 @@ export type PolicyChangeRequest =
   | { kind: 'value'; key: ParamKey; value: string }
   | { kind: 'addPosition'; name: string; factor: string }
   | { kind: 'portion'; positionId: string; factor: string }
-  | { kind: 'stages'; stages: StageInput[] };
+  | { kind: 'sectors'; sectors: SectorEdit[] };
 
 export interface PolicyChangeResult {
   versionId: string;
@@ -92,6 +92,8 @@ interface VersionPositionRow {
   stage?: number | null;
   /** NUMERIC(5,2) como texto ("12.50"). */
   stagePercent?: string | null;
+  /** Sector de la versión nueva (id ya insertado). */
+  sectorId?: string | null;
 }
 
 /** Inserta los puestos de una versión (en la misma transacción que la crea: lo exige la base). */
@@ -108,6 +110,7 @@ async function insertVersionPositions(
       sortOrder: index,
       stage: p.stage ?? null,
       stagePercent: p.stagePercent ?? null,
+      sectorId: p.sectorId ?? null,
     })),
   });
 }
@@ -121,6 +124,13 @@ function draftOf(version: PolicyVersionRecord): PolicyDraft {
       factor: p.factor,
       stage: p.stage,
       stagePercent: p.stagePercent,
+      sectorId: p.sectorId,
+    })),
+    sectors: version.sectors.map((s) => ({
+      id: s.id,
+      name: s.name,
+      base: s.base,
+      percent: s.percent,
     })),
   };
 }
@@ -138,8 +148,8 @@ function plan(current: PolicyVersionRecord, request: PolicyChangeRequest): Polic
       });
     case 'portion':
       return planPortionChange(draft, request.positionId, request.factor);
-    case 'stages':
-      return planStagesChange(draft, request.stages);
+    case 'sectors':
+      return planSectorsChange(draft, request.sectors);
   }
 }
 
@@ -161,29 +171,6 @@ export async function changePolicyInTx(
   const result = plan(current, request);
   if (!result.ok) return result;
 
-  // Puestos de la versión nueva: los que no cambian conservan su porción exacta de la base.
-  const exact = new Map(current.positions.map((p) => [p.positionId, p]));
-  const positions: VersionPositionRow[] = [];
-  for (const p of result.draft.positions) {
-    const previous = exact.get(p.id);
-    // Etapa y porcentaje van juntos (la base lo exige): uno sin el otro no se guarda.
-    const staged =
-      p.stage !== null && p.stage !== undefined && p.stagePercent
-        ? { stage: p.stage, stagePercent: stagePercentToDb(p.stagePercent) }
-        : { stage: null, stagePercent: null };
-    if (p.id === NEW_POSITION) {
-      positions.push({
-        positionId: await positionIdFor(tx, actor.restaurantId, p.name),
-        portion: portionToDb(p.factor),
-        ...staged,
-      });
-    } else if (previous && previous.factor === p.factor) {
-      positions.push({ positionId: p.id, portion: previous.portion, ...staged });
-    } else {
-      positions.push({ positionId: p.id, portion: portionToDb(p.factor), ...staged });
-    }
-  }
-
   const last = await tx.distributionPolicyVersion.aggregate({
     where: { restaurantId: actor.restaurantId },
     _max: { number: true },
@@ -202,6 +189,47 @@ export async function changePolicyInTx(
     },
     select: { id: true },
   });
+
+  // Sectores de la versión nueva (en orden), antes que los puestos que apuntan a ellos.
+  const sectorIds = new Map<string, string>();
+  for (const [index, sector] of (result.draft.sectors ?? []).entries()) {
+    const row = await tx.policyVersionSector.create({
+      data: {
+        versionId: version.id,
+        name: sector.name,
+        sortOrder: index + 1,
+        base: sector.base,
+        percent: stagePercentToDb(sector.percent),
+      },
+      select: { id: true },
+    });
+    sectorIds.set(sector.id, row.id);
+  }
+
+  // Puestos de la versión nueva: los que no cambian conservan su porción exacta de la base.
+  const exact = new Map(current.positions.map((p) => [p.positionId, p]));
+  const positions: VersionPositionRow[] = [];
+  for (const p of result.draft.positions) {
+    const previous = exact.get(p.id);
+    const sectorId = p.sectorId ? (sectorIds.get(p.sectorId) ?? null) : null;
+    // Formato anterior: etapa y porcentaje van juntos (la base lo exige) y nunca con un sector.
+    const staged =
+      sectorId === null && p.stage !== null && p.stage !== undefined && p.stagePercent
+        ? { stage: p.stage, stagePercent: stagePercentToDb(p.stagePercent), sectorId }
+        : { stage: null, stagePercent: null, sectorId };
+    if (p.id === NEW_POSITION) {
+      positions.push({
+        positionId: await positionIdFor(tx, actor.restaurantId, p.name),
+        portion: portionToDb(p.factor),
+        ...staged,
+      });
+    } else if (previous && previous.factor === p.factor) {
+      positions.push({ positionId: p.id, portion: previous.portion, ...staged });
+    } else {
+      positions.push({ positionId: p.id, portion: portionToDb(p.factor), ...staged });
+    }
+  }
+
   await insertVersionPositions(tx, version.id, positions);
   await tx.restaurant.update({
     where: { id: actor.restaurantId },

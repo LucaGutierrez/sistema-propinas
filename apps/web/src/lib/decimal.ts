@@ -56,14 +56,17 @@ export function formatScaled(value: bigint, scale: number, decimals: number): st
   return `${negative ? '-' : ''}${integerPart}${fraction}`;
 }
 
-/** Centavos → "$ 41.435,81". */
+/**
+ * Centavos → "$ 41.435,81". Entre "$" y el número va un espacio irrompible (U+00A0): en pantallas
+ * chicas un monto nunca se parte en dos renglones.
+ */
 export function formatMoney(cents: bigint): string {
   const text = formatScaled(cents, 2, 2);
-  return text.startsWith('-') ? `-$ ${text.slice(1)}` : `$ ${text}`;
+  return text.startsWith('-') ? `-$\u00a0${text.slice(1)}` : `$\u00a0${text}`;
 }
 
 /** Centavos → "$ 41.436" (sin decimales, para tarjetas de resumen). */
 export function formatMoneyShort(cents: bigint): string {
   const text = formatScaled(cents, 2, 0);
-  return text.startsWith('-') ? `-$ ${text.slice(1)}` : `$ ${text}`;
+  return text.startsWith('-') ? `-$\u00a0${text.slice(1)}` : `$\u00a0${text}`;
 }

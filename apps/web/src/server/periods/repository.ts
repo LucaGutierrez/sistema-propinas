@@ -8,9 +8,9 @@
  */
 import { divRoundHalfUp } from '@/lib/decimal';
 import type { ParticipationMethod } from '@/lib/distribution/participation';
-import type { PreviewPerson } from '@/lib/distribution/period-preview';
+import type { PreviewPerson, SectorConfig } from '@/lib/distribution/period-preview';
 import { parseSectorSnapshot } from '@/lib/distribution/sector-snapshot';
-import type { SectorAssignment } from '@/lib/distribution/sector-stages';
+import { isLegacySectors, sectorInputs } from '@/lib/distribution/sector-steps';
 import { participationMethodOf } from '@/lib/policy/db-mapping';
 import {
   hoursText,
@@ -57,19 +57,24 @@ export interface PeriodData {
   unitCents: bigint;
   /** Método de participación de la versión del período. */
   method: ParticipationMethod;
-  /** Sectores con etapa y porcentaje si la política reparte por sectores; null = pozo único. */
-  sectors: SectorAssignment[] | null;
+  /** Sectores si la política reparte por sectores; null = pozo único. */
+  sectors: SectorConfig | null;
 }
 
-/** Los puestos de la versión como sectores (null si la versión no reparte por sectores). */
-export function sectorsOf(policy: PolicyVersionRecord): SectorAssignment[] | null {
+/** Los sectores de la versión con sus puestos (null si la versión no reparte por sectores). */
+export function sectorsOf(policy: PolicyVersionRecord): SectorConfig | null {
   if (policy.columns.poolStructure !== 'STAGED_SECTORS') return null;
-  return policy.positions.map((p) => ({
+  const positions = policy.positions.map((p) => ({
     id: p.positionId,
     name: p.name,
+    sectorId: p.sectorId,
     stage: p.stage,
-    percent: p.stagePercent,
   }));
+  return {
+    sectors: sectorInputs(policy.sectors, positions),
+    positions: positions.map((p) => ({ id: p.id, name: p.name })),
+    legacy: isLegacySectors(policy.sectors, positions),
+  };
 }
 
 export function unitCentsOf(policy: PolicyVersionRecord): bigint {
