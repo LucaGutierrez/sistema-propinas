@@ -16,6 +16,7 @@ import { divRoundHalfUp } from '@/lib/decimal';
 import { HISTORY_PAGE_SIZE } from '@/lib/history/filters';
 import { participationMethodOf } from '@/lib/policy/db-mapping';
 import { hoursText } from '@/lib/distribution/period-view';
+import { parseSectorSnapshot } from '@/lib/distribution/sector-snapshot';
 import type {
   HistoryAdvance,
   HistoryDetail,
@@ -418,6 +419,7 @@ export async function getHistoryDetail(
     method: participationMethodOf(settlement.policyVersion.portionMode),
     portionDisplay: settlement.restaurant.portionDisplay,
     calcVersion: settlement.calcVersion,
+    sectorStages: own ? null : parseSectorSnapshot(settlement.policySnapshot),
     totals: own
       ? null
       : {

@@ -16,14 +16,19 @@ describe('filtros del historial', () => {
     ).toEqual({ status: 'VOIDED', from: '2025-01-01', to: '2025-12-31', employee: 'Ana', page: 3 });
     expect(
       parseHistoryFilters({ estado: 'OPEN', desde: '2025-13-01', hasta: 'x', pagina: '-2' }),
-    ).toEqual({ status: null, from: null, to: null, employee: null, page: 1 });
+    ).toEqual({ status: 'CLOSED', from: null, to: null, employee: null, page: 1 });
+    // Sin estado se ven los cerrados; los eliminados (anulados) se piden explícitamente.
+    expect(parseHistoryFilters({}).status).toBe('CLOSED');
+    expect(parseHistoryFilters({ estado: 'todos' }).status).toBeNull();
     expect(parseHistoryFilters({ persona: 'x'.repeat(200) }).employee).toHaveLength(80);
   });
 
   it('arma la URL sin perder los filtros', () => {
     const filters = parseHistoryFilters({ estado: 'CLOSED', persona: 'Leo' });
-    expect(historyHref(filters, 2)).toBe('/historial?estado=CLOSED&persona=Leo&pagina=2');
+    expect(historyHref(filters, 2)).toBe('/historial?persona=Leo&pagina=2');
     expect(historyHref(parseHistoryFilters({}))).toBe('/historial');
+    expect(historyHref(parseHistoryFilters({ estado: 'TODOS' }))).toBe('/historial?estado=TODOS');
+    expect(historyHref(parseHistoryFilters({ estado: 'VOIDED' }))).toBe('/historial?estado=VOIDED');
   });
 });
 

@@ -9,6 +9,7 @@ import {
   columnsToValues,
   portionFromDb,
   PORTION_DB_SCALE,
+  stagePercentFromDb,
   type PolicyColumns,
 } from '@/lib/policy/db-mapping';
 import type { DistributionConfigView, PolicyVersionView } from '@/lib/policy/view';
@@ -25,6 +26,10 @@ export interface PolicyPositionRecord {
   /** Porción como se muestra: "0,022". */
   factor: string;
   sortOrder: number;
+  /** Reparto por sectores: etapa del puesto (null sin asignar). */
+  stage: number | null;
+  /** Reparto por sectores: porcentaje como se muestra ("12,5"; null sin asignar). */
+  stagePercent: string | null;
 }
 
 export interface PolicyVersionRecord {
@@ -74,6 +79,8 @@ const versionSelect = {
       positionId: true,
       portion: true,
       sortOrder: true,
+      stage: true,
+      stagePercent: true,
       position: { select: { name: true } },
     },
     orderBy: [{ sortOrder: 'asc' }, { positionId: 'asc' }],
@@ -120,6 +127,8 @@ function toRecord(row: VersionRow): PolicyVersionRecord {
         portion,
         factor: portionFromDb(portion),
         sortOrder: p.sortOrder,
+        stage: p.stage,
+        stagePercent: p.stagePercent ? stagePercentFromDb(p.stagePercent.toFixed(2)) : null,
       };
     }),
   };
@@ -210,7 +219,13 @@ function toView(record: PolicyVersionRecord, closedPeriods: number): PolicyVersi
     origin: ORIGIN[record.origin],
     summary: record.summary,
     values: record.values,
-    positions: record.positions.map((p) => ({ id: p.positionId, name: p.name, factor: p.factor })),
+    positions: record.positions.map((p) => ({
+      id: p.positionId,
+      name: p.name,
+      factor: p.factor,
+      stage: p.stage,
+      stagePercent: p.stagePercent,
+    })),
     closedPeriods,
   };
 }

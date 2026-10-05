@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { STANDARD_VALUES } from '@/lib/demo-store/config';
 import { standardPolicy } from '@/lib/demo-store/policy';
-import { planAddPosition, planConfigValue, planPortionChange, type PolicyDraft } from './changes';
+import {
+  planAddPosition,
+  planConfigValue,
+  planPortionChange,
+  planStagesChange,
+  STAGED_GROUPS,
+  type PolicyDraft,
+} from './changes';
 import {
   columnsToValues,
   participationMethodOf,
   portionFromDb,
   portionToDb,
+  stagePercentFromDb,
+  stagePercentToDb,
   valuesToColumns,
 } from './db-mapping';
 import { STANDARD_TEMPLATE } from './standard';
@@ -157,5 +166,80 @@ describe('traducción a la base', () => {
     expect(portionFromDb(portionToDb('0,007'))).toBe('0,007');
     expect(() => portionToDb('0')).toThrow();
     expect(() => portionToDb('0,00000000001')).toThrow();
+  });
+});
+
+describe('reparto por sectores (etapas)', () => {
+  const stages = (draft: PolicyDraft, percents: Record<string, [number, string]>) =>
+    planStagesChange(
+      draft,
+      draft.positions.map((p) => ({
+        positionId: p.id,
+        stage: percents[p.name]?.[0] ?? null,
+        percent: percents[p.name]?.[1] ?? '',
+      })),
+    );
+
+  it('no se activa desde el selector sin etapas completas', () => {
+    expect(planConfigValue(standard(), 'groups', STAGED_GROUPS)).toEqual({
+      ok: false,
+      error:
+        'Para repartir por sectores, primero asigná a cada puesto su etapa y porcentaje en "Reparto por sectores" y guardalo.',
+    });
+  });
+
+  it('guarda todas las etapas juntas, activa los sectores y resume la configuración', () => {
+    const plan = stages(standard(), {
+      Supervisor: [1, '20'],
+      Barra: [2, '40'],
+      Salón: [2, '60'],
+      Bacha: [1, '10'],
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.draft.values.groups).toBe(STAGED_GROUPS);
+    expect(plan.summary).toBe(
+      'Grupos y porcentajes: Sin grupos → Por sectores, en etapas. Reparto por sectores: Etapa 1 (sobre el total): Supervisor 20 %, Bacha 10 % · Etapa 2 (sobre el saldo restante): Barra 40 %, Salón 60 %',
+    );
+    // Guardar lo mismo otra vez no crea una versión.
+    const again = planStagesChange(
+      plan.draft,
+      plan.draft.positions.map((p) => ({
+        positionId: p.id,
+        stage: p.stage ?? null,
+        percent: p.stagePercent ?? '',
+      })),
+    );
+    expect(again).toEqual({ ok: false, error: 'Esa ya es la configuración vigente.' });
+    // Ya completas, también se pueden volver a elegir desde el selector.
+    const back = planConfigValue(plan.draft, 'groups', 'SIN_GRUPOS');
+    expect(back.ok).toBe(true);
+    if (back.ok) expect(planConfigValue(back.draft, 'groups', STAGED_GROUPS).ok).toBe(true);
+  });
+
+  it('rechaza configuraciones incompletas o que no cierran', () => {
+    expect(stages(standard(), { Supervisor: [1, '30'] })).toMatchObject({ ok: false });
+    expect(
+      stages(standard(), {
+        Supervisor: [1, '30'],
+        Barra: [2, '50'],
+        Salón: [2, '40'],
+        Bacha: [2, 'x'],
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        'Bacha: el porcentaje tiene que ser un número mayor que 0 y hasta 100 (hasta 2 decimales).',
+    });
+  });
+
+  it('el porcentaje de etapa se guarda en la base con 2 decimales', () => {
+    expect(stagePercentToDb('12,5')).toBe('12.50');
+    expect(stagePercentFromDb('12.50')).toBe('12,5');
+    expect(stagePercentFromDb('100.00')).toBe('100');
+    expect(() => stagePercentToDb('0')).toThrow();
+    expect(valuesToColumns({ ...STANDARD_VALUES, groups: STAGED_GROUPS }, 1).poolStructure).toBe(
+      'STAGED_SECTORS',
+    );
   });
 });

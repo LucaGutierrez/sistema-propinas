@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { formatDayMonth, formatShortDate } from '@/lib/dates';
 import { formatMoney } from '@/lib/decimal';
 import { type ClosedPeriodView } from '@/lib/distribution/period-view';
+import { SectorBreakdown } from '@/components/distribution/sector-breakdown';
 import { CalculationDetail } from './calculation-detail';
 
 const PAYMENT_LABEL = {
@@ -161,6 +162,16 @@ export function ClosedPeriod({
         </p>
       ) : null}
 
+      {view.sectorStages ? (
+        <section className="mt-4 rounded-xl border bg-card p-4">
+          <h2 className="mb-1 font-medium">Reparto por sectores</h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Cuánto recibió cada sector y sobre qué base se calculó cada porcentaje.
+          </p>
+          <SectorBreakdown stages={view.sectorStages} />
+        </section>
+      ) : null}
+
       <div className="mt-4 print:hidden">
         <CalculationDetail
           rows={view.rows.map((r) => ({
@@ -180,6 +191,7 @@ export function ClosedPeriod({
           roundingLabel={view.roundingUnit === 'PESO' ? 'pesos enteros' : 'centavos'}
           method={view.method}
           portionDisplay={view.portionDisplay}
+          sectors={view.sectorStages}
         />
       </div>
 

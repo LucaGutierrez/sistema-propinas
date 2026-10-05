@@ -5,6 +5,7 @@ import {
   setPolicyValueAction,
   setPortionAction,
   setPortionDisplayAction,
+  setStagesAction,
 } from '@/app/configuracion/actions';
 import type { DistributionConfigActions, DistributionConfigView } from '@/lib/policy/view';
 import { DistributionConfigView as View } from './distribution-config-view';
@@ -14,6 +15,7 @@ const actions: DistributionConfigActions = {
   addPosition: addPositionAction,
   setPortion: setPortionAction,
   setPortionDisplay: setPortionDisplayAction,
+  setStages: setStagesAction,
 };
 
 /**

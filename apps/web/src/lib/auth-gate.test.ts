@@ -22,8 +22,15 @@ describe('filtro previo del middleware', () => {
       '/api/auth/sign-in/email',
       '/_next/data/x',
       '/icon.svg',
+      '/feedback',
     ]) {
       expect(go(path, false)).toBeNull();
     }
+  });
+
+  it('enviar comentarios es público, revisarlos no', () => {
+    expect(go('/feedback', false, '?desde=%2Freparto')).toBeNull();
+    expect(go('/feedback/revisar', false)).toBe('/login?next=%2Ffeedback%2Frevisar');
+    expect(go('/feedbackx', false)).toBe('/login?next=%2Ffeedbackx');
   });
 });

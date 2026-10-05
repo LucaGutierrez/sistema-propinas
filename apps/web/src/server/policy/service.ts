@@ -19,10 +19,12 @@ import {
   planAddPosition,
   planConfigValue,
   planPortionChange,
+  planStagesChange,
   type PolicyChangePlan,
+  type StageInput,
   type PolicyDraft,
 } from '@/lib/policy/changes';
-import { portionToDb, valuesToColumns } from '@/lib/policy/db-mapping';
+import { portionToDb, stagePercentToDb, valuesToColumns } from '@/lib/policy/db-mapping';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
 import { STANDARD_TEMPLATE, type PolicyTemplate } from '@/lib/policy/standard';
 import { getPolicyVersion, type DbClient, type PolicyVersionRecord } from './repository';
@@ -38,7 +40,8 @@ export type ServiceResult<T> = { ok: true; value: T } | { ok: false; error: stri
 export type PolicyChangeRequest =
   | { kind: 'value'; key: ParamKey; value: string }
   | { kind: 'addPosition'; name: string; factor: string }
-  | { kind: 'portion'; positionId: string; factor: string };
+  | { kind: 'portion'; positionId: string; factor: string }
+  | { kind: 'stages'; stages: StageInput[] };
 
 export interface PolicyChangeResult {
   versionId: string;
@@ -82,11 +85,20 @@ async function positionIdFor(tx: DbClient, restaurantId: string, name: string): 
   return created.id;
 }
 
+interface VersionPositionRow {
+  positionId: string;
+  portion: string;
+  /** Reparto por sectores (NULL sin asignar). */
+  stage?: number | null;
+  /** NUMERIC(5,2) como texto ("12.50"). */
+  stagePercent?: string | null;
+}
+
 /** Inserta los puestos de una versión (en la misma transacción que la crea: lo exige la base). */
 async function insertVersionPositions(
   tx: DbClient,
   versionId: string,
-  positions: readonly { positionId: string; portion: string }[],
+  positions: readonly VersionPositionRow[],
 ): Promise<void> {
   await tx.policyVersionPosition.createMany({
     data: positions.map((p, index) => ({
@@ -94,6 +106,8 @@ async function insertVersionPositions(
       positionId: p.positionId,
       portion: p.portion,
       sortOrder: index,
+      stage: p.stage ?? null,
+      stagePercent: p.stagePercent ?? null,
     })),
   });
 }
@@ -101,7 +115,13 @@ async function insertVersionPositions(
 function draftOf(version: PolicyVersionRecord): PolicyDraft {
   return {
     values: version.values,
-    positions: version.positions.map((p) => ({ id: p.positionId, name: p.name, factor: p.factor })),
+    positions: version.positions.map((p) => ({
+      id: p.positionId,
+      name: p.name,
+      factor: p.factor,
+      stage: p.stage,
+      stagePercent: p.stagePercent,
+    })),
   };
 }
 
@@ -118,6 +138,8 @@ function plan(current: PolicyVersionRecord, request: PolicyChangeRequest): Polic
       });
     case 'portion':
       return planPortionChange(draft, request.positionId, request.factor);
+    case 'stages':
+      return planStagesChange(draft, request.stages);
   }
 }
 
@@ -141,18 +163,24 @@ export async function changePolicyInTx(
 
   // Puestos de la versión nueva: los que no cambian conservan su porción exacta de la base.
   const exact = new Map(current.positions.map((p) => [p.positionId, p]));
-  const positions: { positionId: string; portion: string }[] = [];
+  const positions: VersionPositionRow[] = [];
   for (const p of result.draft.positions) {
     const previous = exact.get(p.id);
+    // Etapa y porcentaje van juntos (la base lo exige): uno sin el otro no se guarda.
+    const staged =
+      p.stage !== null && p.stage !== undefined && p.stagePercent
+        ? { stage: p.stage, stagePercent: stagePercentToDb(p.stagePercent) }
+        : { stage: null, stagePercent: null };
     if (p.id === NEW_POSITION) {
       positions.push({
         positionId: await positionIdFor(tx, actor.restaurantId, p.name),
         portion: portionToDb(p.factor),
+        ...staged,
       });
     } else if (previous && previous.factor === p.factor) {
-      positions.push({ positionId: p.id, portion: previous.portion });
+      positions.push({ positionId: p.id, portion: previous.portion, ...staged });
     } else {
-      positions.push({ positionId: p.id, portion: portionToDb(p.factor) });
+      positions.push({ positionId: p.id, portion: portionToDb(p.factor), ...staged });
     }
   }
 
@@ -305,7 +333,7 @@ export async function createTemplatePolicyInTx(
     return fail('El restaurante tiene versiones de política pero ninguna vigente: revisar a mano.');
   }
 
-  const positions: { positionId: string; portion: string }[] = [];
+  const positions: VersionPositionRow[] = [];
   for (const p of template.positions) {
     positions.push({
       positionId: await positionIdFor(tx, actor.restaurantId, p.name),

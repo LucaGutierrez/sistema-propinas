@@ -1,6 +1,6 @@
 'use client';
 
-import { BanIcon, LoaderCircleIcon, RotateCcwIcon } from 'lucide-react';
+import { LoaderCircleIcon, RotateCcwIcon, Trash2Icon } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -12,7 +12,8 @@ import type { HistoryDetail } from '@/lib/history/view';
 const MIN_REASON = 10;
 
 /**
- * Anular un reparto cerrado (confirmación y motivo obligatorio) y rehacer uno anulado. Los botones
+ * "Eliminar" un reparto cerrado = anularlo (confirmación y motivo obligatorio): sale del historial
+ * por defecto pero se conserva para la auditoría (DATABASE.md §6). Y rehacer uno anulado. Los botones
  * dependen del rol, pero el servidor vuelve a verificar todo al actuar.
  */
 export function PeriodActions({ detail }: { detail: HistoryDetail }) {
@@ -30,7 +31,7 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
     setError(null);
     const result = await voidPeriodAction(detail.settlementId, reason).catch(() => ({
       ok: false as const,
-      error: 'No se pudo anular. Revisá tu conexión y probá de nuevo.',
+      error: 'No se pudo eliminar. Revisá tu conexión y probá de nuevo.',
     }));
     setBusy(false);
     if (!result.ok) {
@@ -102,14 +103,16 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
     <div className="rounded-xl border bg-card p-4 text-sm">
       {confirming ? (
         <div className="space-y-3">
-          <p className="font-medium">¿Querés anular este reparto?</p>
+          <p className="font-medium">¿Seguro que querés eliminar este reparto?</p>
           <p className="text-muted-foreground">
-            Queda guardado como anulado (no se borra nada) y sus sobres no se entregan. Después
-            podés rehacerlo con los datos correctos.
+            Deja de aparecer en el historial y sus sobres no se entregan. Para no perder la
+            auditoría, queda guardado como anulado (lo ves con el filtro &quot;Eliminados&quot;) y
+            los adelantos descontados vuelven a quedar pendientes. Después podés rehacer la semana
+            con los datos correctos.
           </p>
           <Input
-            aria-label="Motivo de la anulación"
-            placeholder={`Motivo (mínimo ${MIN_REASON} caracteres)`}
+            aria-label="Motivo de la eliminación"
+            placeholder={`Por qué lo eliminás (mínimo ${MIN_REASON} caracteres)`}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             autoFocus
@@ -131,8 +134,8 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
               onClick={() => void voidIt()}
               disabled={busy || reason.trim().length < MIN_REASON}
             >
-              {busy ? <LoaderCircleIcon className="animate-spin" /> : <BanIcon />}
-              Anular reparto
+              {busy ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
+              Sí, eliminar reparto
             </Button>
           </div>
         </div>
@@ -145,11 +148,11 @@ export function PeriodActions({ detail }: { detail: HistoryDetail }) {
                     ? 'hay 1 sobre entregado'
                     : `hay ${detail.deliveredEnvelopes} sobres entregados`
                 }. Primero revertí esas entregas en Sobres.`
-              : '¿Hubo un error en este reparto? Anulalo y rehacelo.'}
+              : '¿Se cargó mal este reparto? Eliminalo y rehacé la semana.'}
           </p>
           <Button variant="outline" onClick={() => setConfirming(true)} disabled={blocked}>
-            <BanIcon />
-            Anular reparto
+            <Trash2Icon />
+            Eliminar reparto
           </Button>
         </div>
       )}

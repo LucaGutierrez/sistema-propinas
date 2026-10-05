@@ -491,7 +491,7 @@ describe('rehacer', () => {
     await close(r, redone.value.settlementId);
 
     const viewer = await as(r.owner, CAN.viewHistory);
-    const list = await listHistory(db, viewer, parseHistoryFilters({}));
+    const list = await listHistory(db, viewer, parseHistoryFilters({ estado: 'TODOS' }));
     expect(list.items.map((i) => [i.settlementId, i.status])).toEqual([
       [redone.value.settlementId, 'CLOSED'],
       [id, 'VOIDED'],

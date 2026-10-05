@@ -158,6 +158,35 @@ describe('puestos de una versión (porción)', () => {
     );
   });
 
+  /** Versión 2 por sectores con un puesto en una etapa (stage y stage_percent como SQL). */
+  const stagedVersion = (stage: string, percent: string) =>
+    policyVersion(V2, { number: 2, origin: 'CHANGE', previous: ID.V1 }) +
+    `INSERT INTO policy_version_positions (version_id, position_id, portion, stage, stage_percent)
+       VALUES ('${V2}', '${ID.P1}', 0.022, ${stage}, ${percent});`;
+
+  it('reparto por sectores: guarda la etapa y el porcentaje (2 decimales) de cada puesto', async () => {
+    await db.exec(stagedVersion('1', '12.5'));
+    const [row] = await db.rows<{ stage: number; stage_percent: string }>(
+      `SELECT stage, stage_percent::text AS stage_percent
+       FROM policy_version_positions WHERE version_id = '${V2}'`,
+    );
+    expect(row).toEqual({ stage: 1, stage_percent: '12.50' });
+  });
+
+  it.each([
+    ['1', 'NULL', /ck_pvp_stage_pair/],
+    ['NULL', '30', /ck_pvp_stage_pair/],
+    ['0', '30', /"ck_pvp_stage"/],
+    ['10', '30', /"ck_pvp_stage"/],
+    ['1', '0', /ck_pvp_stage_percent/],
+    ['1', '100.01', /ck_pvp_stage_percent/],
+  ])(
+    'reparto por sectores: etapa %s y porcentaje %s se rechazan',
+    async (stage, percent, error) => {
+      await db.fails(stagedVersion(stage, percent), error);
+    },
+  );
+
   it('la porción guarda 10 decimales exactos (0,65/45 = 0,0144444444)', async () => {
     await db.exec(newVersion);
     const [row] = await db.rows<{ portion: string }>(

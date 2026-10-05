@@ -69,6 +69,24 @@ export async function addPositionAction(name: string, factor: string): Promise<s
   return run({ kind: 'addPosition', name: String(name), factor: String(factor) });
 }
 
+const stagesInput = z
+  .array(
+    z.object({
+      positionId: z.string().min(1).max(64),
+      stage: z.number().int().min(1).max(9).nullable(),
+      percent: z.string().max(12),
+    }),
+  )
+  .min(1, { error: 'Definí al menos un sector.' })
+  .max(100);
+
+/** Etapas y porcentajes de todos los puestos (reparto por sectores): una versión nueva. */
+export async function setStagesAction(stages: unknown): Promise<string | null> {
+  const parsed = stagesInput.safeParse(stages);
+  if (!parsed.success) return parsed.error.issues[0]?.message ?? 'Revisá los datos.';
+  return run({ kind: 'stages', stages: parsed.data });
+}
+
 export async function setPortionAction(positionId: string, factor: string): Promise<string | null> {
   return run({ kind: 'portion', positionId: String(positionId), factor: String(factor) });
 }

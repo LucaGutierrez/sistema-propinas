@@ -4,12 +4,14 @@
  * reconstruye con la configuración actual. Importes como texto de centavos.
  */
 import type { ParticipationMethod } from '@/lib/distribution/participation';
+import type { SectorStageView } from '@/lib/distribution/sector-snapshot';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
 import type { EnvelopeEventType, EnvelopeStatus } from '@/lib/envelopes/view';
 
 export type HistoryStatus = 'CLOSED' | 'VOIDED';
 
 export interface HistoryFilters {
+  /** null = todos (cerrados y eliminados). Por defecto, solo los cerrados. */
   status: HistoryStatus | null;
   /** Semanas que empiezan desde / hasta esta fecha (ISO). */
   from: string | null;
@@ -114,6 +116,11 @@ export interface HistoryDetail {
   /** Cómo se muestran las porciones (preferencia actual: solo presentación). */
   portionDisplay: PortionDisplay;
   calcVersion: string | null;
+  /**
+   * Reparto por sectores guardado al cerrar: configuración aplicada (etapa, base y % de cada
+   * sector) y resultado por sector. null con pozo único o para SELF (revelaría los totales).
+   */
+  sectorStages: SectorStageView[] | null;
   /** Totales del reparto (null para SELF: no se revelan). */
   totals: {
     tipsCents: string;

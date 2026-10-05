@@ -44,7 +44,10 @@ const SPLIT: Pairs<'splitTiming', SplitTiming> = [['POR_PERIODO', 'PER_PERIOD']]
 const HOURS_BASIS: Pairs<'hoursBasis', HoursBasis> = [['TOTAL_PERIODO', 'PERIOD_TOTAL']];
 const HOURS_ENTRY: Pairs<'hoursEntry', HoursEntry> = [['TOTAL_AL_CERRAR', 'PERIOD_TOTAL_AT_CLOSE']];
 const SOURCES: Pairs<'sources', PotSources> = [['UNA_FUENTE', 'SINGLE_DAILY_AMOUNT']];
-const GROUPS: Pairs<'groups', PoolStructure> = [['SIN_GRUPOS', 'SINGLE_POOL']];
+const GROUPS: Pairs<'groups', PoolStructure> = [
+  ['SIN_GRUPOS', 'SINGLE_POOL'],
+  ['PORCENTAJE_POR_GRUPO', 'STAGED_SECTORS'],
+];
 const WEIGHTS: Pairs<'weights', PortionMode> = [
   ['POR_PUESTO', 'BY_POSITION'],
   ['POR_PUNTOS', 'BY_POINTS'],
@@ -132,6 +135,22 @@ export function portionFromDb(portion: string): string {
   if (scaled === null) throw new Error(`Porción inválida en la base: ${portion}`);
   const text = formatScaled(scaled, PORTION_DB_SCALE, PORTION_DB_SCALE);
   return text.replace(/0+$/, '').replace(/,$/, '');
+}
+
+/** Porcentaje de etapa escrito ("12,5") → texto para NUMERIC(5,2) ("12.50"). */
+export function stagePercentToDb(percent: string): string {
+  const scaled = parseDecimal(percent, 2);
+  if (scaled === null || scaled <= 0n || scaled > 10_000n) {
+    throw new Error(`Porcentaje de etapa inválido: ${percent}`);
+  }
+  return formatScaled(scaled, 2, 2).replace(/\./g, '').replace(',', '.');
+}
+
+/** Porcentaje de etapa de la base ("12.50") → como se muestra ("12,5"). */
+export function stagePercentFromDb(percent: string): string {
+  const scaled = parseDecimal(percent, 2);
+  if (scaled === null) throw new Error(`Porcentaje de etapa inválido en la base: ${percent}`);
+  return formatScaled(scaled, 2, 2).replace(/\./g, '').replace(/,?0+$/, '').replace(/,$/, '');
 }
 
 /** Método de participación de una versión (los valores del enum de la base son los del motor). */

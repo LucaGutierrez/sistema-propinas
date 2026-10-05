@@ -12,9 +12,14 @@ export const SESSION_COOKIES = ['gutip.session_token', '__Secure-gutip.session_t
 
 /** Rutas que se ven sin sesión (además de los archivos de Next y los estáticos). */
 const PUBLIC_PREFIXES = ['/login', '/registro', '/api/', '/_next/', '/icon'];
+/** Rutas públicas EXACTAS: enviar comentarios no exige cuenta (revisarlos, sí). */
+const PUBLIC_EXACT = ['/feedback'];
 
 export function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+  return (
+    PUBLIC_EXACT.includes(pathname) ||
+    PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix))
+  );
 }
 
 /** Destino del login para un pedido sin sesión, o null si puede seguir. */

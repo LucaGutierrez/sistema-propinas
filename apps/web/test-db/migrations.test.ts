@@ -156,6 +156,18 @@ describe('migraciones (prisma/migrations)', () => {
     expect(migrationSql(m1 ?? '').endsWith(sqlFile('0004_participation.sql'))).toBe(true);
   });
 
+  it('la migración de sectores termina con una copia literal de sql/0005_staged_sectors.sql', () => {
+    const staged = migrationNames().find((name) => name.endsWith('_staged_sectors'));
+    expect(staged).toBeDefined();
+    expect(migrationSql(staged ?? '').endsWith(sqlFile('0005_staged_sectors.sql'))).toBe(true);
+  });
+
+  it('la migración de feedback termina con una copia literal de sql/0006_feedback.sql', () => {
+    const feedback = migrationNames().find((name) => name.endsWith('_feedback'));
+    expect(feedback).toBeDefined();
+    expect(migrationSql(feedback ?? '').endsWith(sqlFile('0006_feedback.sql'))).toBe(true);
+  });
+
   it('la migración M1 conserva los datos existentes: BY_POSITION, DECIMAL y 1,00 punto', async () => {
     const db = new PGlite({ extensions: { btree_gist } });
     try {

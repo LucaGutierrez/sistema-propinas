@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 import {
   DATABASE_ACCOUNT_NAV,
   DATABASE_VENUE_NAV,
+  FEEDBACK_REVIEW_NAV,
+  FEEDBACK_SEND_NAV,
   isActiveRoute,
   type DatabaseNavItem,
 } from './database-nav';
@@ -19,6 +21,8 @@ export interface ShellAccount {
   userName: string;
   roleLabel: string;
   restaurantName: string | null;
+  /** Revisa los comentarios de testers (GUTIP_FEEDBACK_REVIEWERS). */
+  feedbackReviewer?: boolean;
 }
 
 function NavLink({
@@ -95,8 +99,13 @@ function SidebarContent({
             {DATABASE_ACCOUNT_NAV.map((item) => (
               <NavLink key={item.href} item={item} pathname={pathname} onNavigate={onNavigate} />
             ))}
+            {account.feedbackReviewer ? (
+              <NavLink item={FEEDBACK_REVIEW_NAV} pathname={pathname} onNavigate={onNavigate} />
+            ) : null}
           </>
-        ) : null}
+        ) : (
+          <NavLink item={FEEDBACK_SEND_NAV} pathname={pathname} onNavigate={onNavigate} />
+        )}
       </nav>
     </div>
   );

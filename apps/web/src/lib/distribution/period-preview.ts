@@ -8,11 +8,15 @@
  * para mostrar el resultado en vivo y el servidor la vuelve a ejecutar con los datos de la base al
  * cerrar: los dos llegan a los mismos importes porque es la misma función con los mismos datos.
  *
+ * Con la política "por sectores, en etapas" (`sectors`), primero se calcula el monto de cada sector
+ * (`sector-stages.ts`: la etapa 1 sobre el total, las siguientes sobre el saldo) y después cada
+ * sector es un pozo que se reparte entre su gente con el mismo motor de participación.
+ *
  * Además de calcular, decide si el reparto se puede cerrar. Una persona activa SIN horas cargadas
  * nunca se reparte en silencio entre las demás: queda marcada "Sin horas cargadas" y bloquea el
  * cierre hasta que se cargue su número (0 si no trabajó).
  */
-import { divRoundHalfUp, parseDecimal } from '@/lib/decimal';
+import { divRoundHalfUp, formatMoney, parseDecimal } from '@/lib/decimal';
 import {
   applyAdvances,
   computePool,
@@ -24,6 +28,12 @@ import {
   type ParticipationMethod,
 } from './participation';
 import { FACTOR_SCALE, HOURS_SCALE } from './provisional-formula';
+import {
+  checkStages,
+  computeStages,
+  type SectorAssignment,
+  type StageResult,
+} from './sector-stages';
 
 /** Horas de un período semanal: nadie puede tener más de 24 × 7 (la base aplica el mismo tope). */
 export const MAX_PERIOD_HOURS = 168;
@@ -96,6 +106,8 @@ export type PreviewIssueCode =
   | 'NO_POSITION'
   | 'NO_POINTS'
   | 'NO_HOURS'
+  | 'SECTORS_CONFIG'
+  | 'EMPTY_SECTOR'
   | 'ROUNDING';
 
 export interface PreviewIssue {
@@ -134,6 +146,11 @@ export interface PeriodPreview {
    * BY_POSITION: con puntos individuales, la hora vale distinto para cada persona.
    */
   hourValues: HourValue[];
+  /**
+   * Reparto por sectores: cada etapa con su base y el monto de cada sector, y cuántas personas
+   * cobran en cada sector. null con pozo único o si la configuración por sectores está incompleta.
+   */
+  sectors: { stages: StageResult[]; people: Map<string, number> } | null;
 }
 
 /** Horas escritas → centésimas de hora; null si el número no es válido o supera el período. */
@@ -166,6 +183,8 @@ export function buildPeriodPreview(input: {
   unitCents: bigint;
   /** Método de participación de la política (por defecto BY_POSITION, el de hoy). */
   method?: ParticipationMethod;
+  /** Sectores con etapa y porcentaje (política por sectores); null/ausente = pozo único. */
+  sectors?: readonly SectorAssignment[] | null;
   people: readonly PreviewPerson[];
 }): PeriodPreview {
   const method = input.method ?? 'BY_POSITION';
@@ -276,30 +295,140 @@ export function buildPeriodPreview(input: {
   let totalFinalCents = 0n;
   let pointValueCents: bigint | null = null;
   const hourValues: HourValue[] = [];
+  let sectors: PeriodPreview['sectors'] = null;
 
-  if (input.totalCents > 0n && participants.length > 0) {
-    try {
-      const weights = participants.map((r) =>
-        participationWeight(
-          { hoursE2: r.hoursE2 ?? 0n, factorE4: r.factorE4, pointsE2: r.pointsE2 },
-          method,
+  // Por sectores: la configuración tiene que estar completa y cerrar antes de calcular nada.
+  const stagesCheck =
+    input.sectors !== undefined && input.sectors !== null ? checkStages(input.sectors) : null;
+  if (stagesCheck && !stagesCheck.ok) {
+    issues.push(
+      issue(
+        'SECTORS_CONFIG',
+        `La configuración por sectores está incompleta: ${stagesCheck.errors.join(' ')} Completala en Configuración.`,
+      ),
+    );
+  }
+
+  const weightOf = (r: PreviewRow) =>
+    participationWeight(
+      { hoursE2: r.hoursE2 ?? 0n, factorE4: r.factorE4, pointsE2: r.pointsE2 },
+      method,
+    );
+  /** Valor de 1 hora de cada puesto en un pozo (solo BY_POSITION: con puntos varía por persona). */
+  const pushHourValues = (
+    members: readonly PreviewRow[],
+    poolCents: bigint,
+    poolWeightE8: bigint,
+  ) => {
+    if (method !== 'BY_POSITION' || poolWeightE8 === 0n) return;
+    const seen = new Set<string>();
+    for (const row of members) {
+      const key = `${row.positionName ?? ''}|${row.factor ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hourValues.push({
+        positionName: row.positionName ?? '—',
+        factor: row.factor ?? '',
+        centsPerHour: divRoundHalfUp(
+          poolCents *
+            participationWeight(
+              { hoursE2: 10n ** BigInt(HOURS_SCALE), factorE4: row.factorE4, pointsE2: null },
+              method,
+            ),
+          poolWeightE8,
         ),
-      );
-      const pool = computePool(
-        input.totalCents,
-        participants.map((r, index) => ({ id: r.employeeId, weightE8: weights[index] ?? 0n })),
-        { unitCents: input.unitCents },
-      );
-      // Un solo pozo: el bruto de cada persona es su importe en este pozo.
+      });
+    }
+  };
+
+  if (input.totalCents > 0n && participants.length > 0 && (!stagesCheck || stagesCheck.ok)) {
+    try {
+      // Bruto de cada persona: su parte del pozo único, o del pozo de su sector.
+      const shares = new Map<
+        string,
+        { weightE8: bigint; percentE2: bigint; amountCents: bigint }
+      >();
+      if (stagesCheck?.ok) {
+        const stages = computeStages(input.totalCents, stagesCheck.stages, input.unitCents);
+        const people = new Map<string, number>();
+        const empty: { name: string; amountCents: bigint }[] = [];
+        for (const sector of stages.flatMap((stage) => stage.sectors)) {
+          const members = participants.filter((r) => r.positionId === sector.id);
+          people.set(sector.id, members.length);
+          if (members.length === 0) {
+            // La plata de un sector sin nadie que cobre nunca pasa en silencio a otro sector. Si
+            // todavía faltan horas de alguien del sector, ya lo dice MISSING_HOURS.
+            const pending = rows.some(
+              (r) =>
+                r.positionId === sector.id &&
+                r.active &&
+                (r.state === 'missing' || r.state === 'invalid'),
+            );
+            if (sector.amountCents > 0n && !pending) {
+              empty.push({ name: sector.name, amountCents: sector.amountCents });
+            }
+            continue;
+          }
+          if (sector.amountCents === 0n) {
+            for (const r of members) {
+              shares.set(r.employeeId, { weightE8: weightOf(r), percentE2: 0n, amountCents: 0n });
+            }
+            continue;
+          }
+          const pool = computePool(
+            sector.amountCents,
+            members.map((r) => ({ id: r.employeeId, weightE8: weightOf(r) })),
+            { unitCents: input.unitCents },
+          );
+          for (const share of pool.shares) {
+            shares.set(share.id, {
+              weightE8: share.weightE8,
+              // Con sectores, la participación se expresa sobre el TOTAL de la propina.
+              percentE2: divRoundHalfUp(share.amountCents * 10_000n, input.totalCents),
+              amountCents: share.amountCents,
+            });
+          }
+          pushHourValues(members, sector.amountCents, pool.totalWeightE8);
+        }
+        if (empty.length > 0) {
+          issues.push(
+            issue(
+              'EMPTY_SECTOR',
+              `${empty
+                .map(
+                  (e) =>
+                    `Nadie de ${e.name} tiene horas y le corresponden ${formatMoney(e.amountCents)}.`,
+                )
+                .join(
+                  ' ',
+                )} Cargá las horas de su gente o revisá los porcentajes en Configuración: esa plata no pasa a otros sectores.`,
+            ),
+          );
+        }
+        sectors = { stages, people };
+      } else {
+        const pool = computePool(
+          input.totalCents,
+          participants.map((r) => ({ id: r.employeeId, weightE8: weightOf(r) })),
+          { unitCents: input.unitCents },
+        );
+        for (const share of pool.shares) shares.set(share.id, share);
+        // Valor de 1,00 de ponderado y de 1 hora de cada puesto (con puntos = 1,00).
+        pointValueCents = divRoundHalfUp(input.totalCents * ONE_WEIGHT, pool.totalWeightE8);
+        pushHourValues(participants, input.totalCents, pool.totalWeightE8);
+      }
+
+      const paid = participants.filter((r) => shares.has(r.employeeId));
+      // Cada persona cobra de un solo pozo: su bruto es su importe en ese pozo.
       const advances = applyAdvances(
-        participants.map((r, index) => ({
+        paid.map((r) => ({
           id: r.employeeId,
-          grossCents: pool.shares[index]?.amountCents ?? 0n,
+          grossCents: shares.get(r.employeeId)?.amountCents ?? 0n,
           pendingCents: r.pendingAdvanceCents,
         })),
       );
-      participants.forEach((row, index) => {
-        const share = pool.shares[index];
+      paid.forEach((row, index) => {
+        const share = shares.get(row.employeeId);
         const advance = advances[index];
         if (!share || !advance) return;
         row.weightE8 = share.weightE8;
@@ -310,32 +439,10 @@ export function buildPeriodPreview(input: {
         row.pendingAdvanceCents = advance.remainingCents;
         row.finalCents = advance.finalCents;
       });
-      computed = true;
-      totalWeightE8 = pool.totalWeightE8;
+      computed = paid.length > 0;
+      totalWeightE8 = paid.reduce((sum, r) => sum + r.weightE8, 0n);
       totalAdvanceCents = advances.reduce((sum, a) => sum + a.appliedCents, 0n);
       totalFinalCents = advances.reduce((sum, a) => sum + a.finalCents, 0n);
-      // Valor de 1,00 de ponderado y de 1 hora de cada puesto (con puntos = 1,00).
-      pointValueCents = divRoundHalfUp(input.totalCents * ONE_WEIGHT, totalWeightE8);
-      if (method === 'BY_POSITION') {
-        const seen = new Set<string>();
-        for (const row of participants) {
-          const key = `${row.positionName ?? ''}|${row.factor ?? ''}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          hourValues.push({
-            positionName: row.positionName ?? '—',
-            factor: row.factor ?? '',
-            centsPerHour: divRoundHalfUp(
-              input.totalCents *
-                participationWeight(
-                  { hoursE2: 10n ** BigInt(HOURS_SCALE), factorE4: row.factorE4, pointsE2: null },
-                  method,
-                ),
-              totalWeightE8,
-            ),
-          });
-        }
-      }
     } catch (error) {
       if (!(error instanceof ParticipationError)) throw error;
       issues.push(issue('ROUNDING', error.message));
@@ -357,5 +464,6 @@ export function buildPeriodPreview(input: {
     totalFinalCents,
     pointValueCents,
     hourValues,
+    sectors,
   };
 }

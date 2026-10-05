@@ -20,7 +20,9 @@ const dateTime = new Intl.DateTimeFormat('es-AR', {
 
 /** Historial de repartos (solo lectura): filtros por URL, lista y paginación. */
 export function HistoryListView({ list, filters }: { list: HistoryList; filters: HistoryFilters }) {
-  const filtered = Boolean(filters.status || filters.from || filters.to || filters.employee);
+  const filtered = Boolean(
+    filters.status !== 'CLOSED' || filters.from || filters.to || filters.employee,
+  );
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-6">
@@ -28,7 +30,7 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
         <p className="mt-1 text-sm text-muted-foreground">
           {list.ownOnly
             ? 'Tus repartos cerrados: cuánto te correspondió y si ya te entregaron el sobre.'
-            : 'Los repartos cerrados, tal como quedaron. Es de solo lectura.'}
+            : 'Los repartos guardados, tal como quedaron. Para eliminar uno que se cargó mal, abrilo y usá "Eliminar reparto".'}
         </p>
       </div>
 
@@ -44,12 +46,12 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
           <select
             id="estado"
             name="estado"
-            defaultValue={filters.status ?? ''}
+            defaultValue={filters.status === 'CLOSED' ? '' : (filters.status ?? 'TODOS')}
             className={SELECT_CLASS}
           >
-            <option value="">Cerrados y anulados</option>
-            <option value="CLOSED">Cerrados</option>
-            <option value="VOIDED">Anulados</option>
+            <option value="">Guardados</option>
+            <option value="VOIDED">Eliminados</option>
+            <option value="TODOS">Todos</option>
           </select>
         </div>
         <div>
@@ -133,7 +135,7 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {item.status === 'VOIDED'
-                        ? `Anulado${item.voidedAt ? ` el ${dateTime.format(new Date(item.voidedAt))}` : ''}`
+                        ? `Eliminado (anulado)${item.voidedAt ? ` el ${dateTime.format(new Date(item.voidedAt))}` : ''}`
                         : `${item.delivered} de ${item.envelopes} sobres entregados${
                             BigInt(item.toDeliverCents) > 0n
                               ? ` · falta entregar ${formatMoney(BigInt(item.toDeliverCents))}`
@@ -148,7 +150,7 @@ export function HistoryListView({ list, filters }: { list: HistoryList; filters:
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
                     {item.status === 'VOIDED' ? (
-                      <Badge variant="outline">Anulado</Badge>
+                      <Badge variant="outline">Eliminado</Badge>
                     ) : (
                       <Badge variant="success">
                         <LockIcon />

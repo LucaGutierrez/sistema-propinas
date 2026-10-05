@@ -7,6 +7,8 @@ import { formatScaled, parseDecimal } from '@/lib/decimal';
 import { formatPortion, type PortionDisplay } from '@/lib/policy/portion-format';
 import { WEIGHT_SCALE, type ParticipationMethod } from './participation';
 import { HOURS_SCALE } from './provisional-formula';
+import type { SectorStageView } from './sector-snapshot';
+import type { SectorAssignment } from './sector-stages';
 
 /** Nota de la propina cargada como total del período (una sola fila en `tip_entries`). */
 export const PERIOD_TOTAL_NOTE = 'Total del período';
@@ -50,6 +52,8 @@ export interface OpenPeriodView {
   roundingUnit: 'CENT' | 'PESO';
   /** Método de participación de la versión del período. */
   method: ParticipationMethod;
+  /** Reparto por sectores (etapa y % de cada puesto); null = pozo único. */
+  sectors: SectorAssignment[] | null;
   /** Cómo se muestran las porciones (preferencia del restaurante). */
   portionDisplay: PortionDisplay;
   /** 1 (centavos) o 100 (pesos enteros). */
@@ -96,6 +100,8 @@ export interface ClosedPeriodView {
   roundingUnit: 'CENT' | 'PESO';
   /** Método de participación con el que se calculó (la versión no cambia nunca). */
   method: ParticipationMethod;
+  /** Reparto por sectores guardado al cerrar (snapshot); null = pozo único. */
+  sectorStages: SectorStageView[] | null;
   portionDisplay: PortionDisplay;
   totalCents: string;
   totalAdvancesCents: string;

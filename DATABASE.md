@@ -63,7 +63,8 @@ Encima de los tres conceptos está la **política de distribución** (`distribut
 | `HoursBasis` | `PERIOD_TOTAL` (horas totales del período) |
 | `HoursEntry` | `PERIOD_TOTAL_AT_CLOSE` (se cargan como total al cerrar) |
 | `PotSources` | `SINGLE_DAILY_AMOUNT` (un monto por día) |
-| `PoolStructure` | `SINGLE_POOL` (un pozo para todo el restaurante) |
+| `FeedbackCategory` / `FeedbackStatus` | `BUG`, `SUGGESTION`, `COMMENT` / `NEW`, `IN_REVIEW`, `RESOLVED` (comentarios de testers, §4.8) |
+| `PoolStructure` | `SINGLE_POOL` (un pozo para todo el restaurante) · `STAGED_SECTORS` (por sectores, en etapas: cada puesto es un sector con `policy_version_positions.stage` y `stage_percent`; la etapa 1 sobre el total y las siguientes sobre el saldo; dentro de cada sector se reparte por ponderado. Sigue siendo **un** reparto por período: los sectores se calculan dentro de él) |
 | `PortionMode` | Método de participación: `BY_POSITION` (ponderado = horas × porción del puesto), `BY_POINTS` (horas × puntos individuales), `BY_POSITION_TIMES_POINTS` (horas × porción × puntos) |
 | `PortionDisplay` | `DECIMAL` (0,022), `PERCENT` (2,2 %): solo presentación, en `restaurants` |
 | `RoundingUnit` | `CENT`, `PESO` |
@@ -167,6 +168,7 @@ Una versión **nunca se edita**: cambiar la política crea una versión nueva, q
 
 **policy_version_positions** — los puestos de la versión con su porción; **solo inserción**
 `version_id FK, position_id FK, portion NUMERIC(20,10) CHECK (> 0), sort_order int` · PK `(version_id, position_id)`.
+Reparto por sectores (migración `20261004000000_staged_sectors`): `stage smallint null CHECK (1…9)`, `stage_percent NUMERIC(5,2) null CHECK (> 0 AND <= 100)` y `CHECK ((stage IS NULL) = (stage_percent IS NULL))`. Que cada etapa cierre (intermedias < 100 %, la última = 100 %) lo valida el servicio al crear la versión (`checkStages`), con mensajes para el usuario. El resultado por sector de cada cierre queda en `weekly_settlements.policy_snapshot.sectorStages` (base, % y monto de cada sector; lo lee el historial sin recalcular).
 Trigger `fn_policy_version_positions_before_insert`: los puestos **solo se agregan en la misma transacción que crea la versión** (marca por transacción `gutip.new_policy_versions`, ver §5) y tienen que ser del mismo restaurante. Así una versión confirmada no cambia nunca.
 
 **period_policy_changes** — bitácora de cambios de versión de un período; **solo inserción**
@@ -376,6 +378,12 @@ Se genera un sobre por cada empleado con `gross_cents > 0` en la semana. Si `net
 
 **audit_log** — `id, restaurant_id, user_id, action, entity, entity_id, payload jsonb, created_at`.
 Se registra: cierre/anulación de distribuciones y liquidaciones, todo cambio de estado de sobre (en especial reversiones desde `DELIVERED`), cambios de cotización.
+
+### 4.8 Comentarios de testers (`feedback`)
+
+**feedback** — comentarios y sugerencias sobre GUTIP (no pertenecen a un restaurante). Migración `20261004010000_feedback` + `sql/0006_feedback.sql`.
+`id, category feedback_category (BUG | SUGGESTION | COMMENT), title text null CHECK (1–120), description text CHECK (10–4000), page text null CHECK (ruta "/…", ≤ 200), status feedback_status (NEW | IN_REVIEW | RESOLVED) default NEW, user_id FK users null (null = enviado sin cuenta), status_changed_at null, status_changed_by FK users null (CHECK: si hay quién, hay cuándo), created_at, updated_at` · índices por `created_at DESC` y `(category, created_at DESC)`.
+No guarda IP ni navegador. Es la única tabla con **borrado físico** permitido (no es información financiera): lo hacen solo los revisores (`GUTIP_FEEDBACK_REVIEWERS`), con confirmación en la pantalla.
 
 ---
 

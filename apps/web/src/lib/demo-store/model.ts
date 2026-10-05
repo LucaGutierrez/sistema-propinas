@@ -28,6 +28,10 @@ export interface Position {
   id: string;
   name: string;
   factor: string;
+  /** Reparto por sectores: etapa del puesto (1, 2, 3…); null/ausente = sin asignar. */
+  stage?: number | null;
+  /** Reparto por sectores: porcentaje de su etapa ("30", "12,5"); null/ausente = sin cargar. */
+  stagePercent?: string | null;
 }
 
 export interface Staff {

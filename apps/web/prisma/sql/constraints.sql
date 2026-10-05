@@ -826,3 +826,33 @@ ALTER TABLE daily_distribution_items
     CHECK (individual_points_snapshot IS NULL OR individual_points_snapshot > 0),
   ADD CONSTRAINT ck_ddi_weight_inputs
     CHECK (portion_snapshot IS NOT NULL OR individual_points_snapshot IS NOT NULL);
+
+-- -----------------------------------------------------------------------------
+-- 11. Reparto por sectores: etapa y porcentaje de cada puesto en una versión
+-- -----------------------------------------------------------------------------
+
+-- 11.1 Etapa y porcentaje van juntos (los dos o ninguno), la etapa es 1…9 y el porcentaje es
+--      de su base (0 < % ≤ 100). Que cada etapa cierre (intermedias < 100 %, la última = 100 %)
+--      lo valida el servicio al crear la versión, con mensajes para el usuario.
+ALTER TABLE policy_version_positions
+  ADD CONSTRAINT ck_pvp_stage_pair CHECK ((stage IS NULL) = (stage_percent IS NULL)),
+  ADD CONSTRAINT ck_pvp_stage CHECK (stage IS NULL OR stage BETWEEN 1 AND 9),
+  ADD CONSTRAINT ck_pvp_stage_percent
+    CHECK (stage_percent IS NULL OR (stage_percent > 0 AND stage_percent <= 100));
+
+-- -----------------------------------------------------------------------------
+-- 12. Comentarios de testers (feedback)
+-- -----------------------------------------------------------------------------
+
+-- 12.1 Descripción de 10 a 4000 caracteres; título opcional de 1 a 120; la pantalla, si está, es
+--      una ruta de la app ("/reparto") de hasta 200 caracteres. Quién cambió el estado siempre
+--      tiene su fecha.
+ALTER TABLE feedback
+  ADD CONSTRAINT ck_feedback_description
+    CHECK (length(btrim(description)) BETWEEN 10 AND 4000),
+  ADD CONSTRAINT ck_feedback_title
+    CHECK (title IS NULL OR length(btrim(title)) BETWEEN 1 AND 120),
+  ADD CONSTRAINT ck_feedback_page
+    CHECK (page IS NULL OR (page LIKE '/%' AND length(page) <= 200)),
+  ADD CONSTRAINT ck_feedback_status_changed
+    CHECK (status_changed_by IS NULL OR status_changed_at IS NOT NULL);

@@ -9,6 +9,8 @@
 import { divRoundHalfUp } from '@/lib/decimal';
 import type { ParticipationMethod } from '@/lib/distribution/participation';
 import type { PreviewPerson } from '@/lib/distribution/period-preview';
+import { parseSectorSnapshot } from '@/lib/distribution/sector-snapshot';
+import type { SectorAssignment } from '@/lib/distribution/sector-stages';
 import { participationMethodOf } from '@/lib/policy/db-mapping';
 import {
   hoursText,
@@ -55,6 +57,19 @@ export interface PeriodData {
   unitCents: bigint;
   /** Método de participación de la versión del período. */
   method: ParticipationMethod;
+  /** Sectores con etapa y porcentaje si la política reparte por sectores; null = pozo único. */
+  sectors: SectorAssignment[] | null;
+}
+
+/** Los puestos de la versión como sectores (null si la versión no reparte por sectores). */
+export function sectorsOf(policy: PolicyVersionRecord): SectorAssignment[] | null {
+  if (policy.columns.poolStructure !== 'STAGED_SECTORS') return null;
+  return policy.positions.map((p) => ({
+    id: p.positionId,
+    name: p.name,
+    stage: p.stage,
+    percent: p.stagePercent,
+  }));
 }
 
 export function unitCentsOf(policy: PolicyVersionRecord): bigint {
@@ -185,6 +200,7 @@ export async function loadPeriodData(
     advances: pending,
     unitCents: unitCentsOf(policy),
     method: participationMethodOf(policy.columns.portionMode),
+    sectors: sectorsOf(policy),
   };
 }
 
@@ -249,6 +265,7 @@ export async function getOpenPeriodView(
     policyVersion: data.policy.number,
     roundingUnit: data.policy.columns.roundingUnit,
     method: data.method,
+    sectors: data.sectors,
     portionDisplay: restaurant?.portionDisplay ?? 'DECIMAL',
     unitCents: data.unitCents.toString(),
     tips: {
@@ -363,6 +380,7 @@ export async function getClosedPeriodView(
       status: true,
       closedAt: true,
       closedBy: { select: { name: true } },
+      policySnapshot: true,
       policyVersion: { select: { number: true, roundingUnit: true, portionMode: true } },
       restaurant: { select: { portionDisplay: true } },
       totalCents: true,
@@ -426,6 +444,7 @@ export async function getClosedPeriodView(
     policyVersion: settlement.policyVersion.number,
     roundingUnit: settlement.policyVersion.roundingUnit,
     method: participationMethodOf(settlement.policyVersion.portionMode),
+    sectorStages: parseSectorSnapshot(settlement.policySnapshot),
     portionDisplay: settlement.restaurant.portionDisplay,
     totalCents: (settlement.totalCents ?? 0n).toString(),
     totalAdvancesCents: (settlement.totalAdvancesCents ?? 0n).toString(),

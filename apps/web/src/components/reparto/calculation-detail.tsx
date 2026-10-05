@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { formatMoney } from '@/lib/decimal';
 import { WEIGHT_SCALE, type ParticipationMethod } from '@/lib/distribution/participation';
 import { formatHoursE2, formatWeight, weightInputsText } from '@/lib/distribution/period-view';
+import type { SectorStageView } from '@/lib/distribution/sector-snapshot';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
 
 export interface DetailRow {
@@ -40,6 +41,7 @@ export function CalculationDetail({
   roundingLabel,
   method,
   portionDisplay,
+  sectors = null,
 }: {
   rows: readonly DetailRow[];
   totalCents: bigint;
@@ -47,13 +49,46 @@ export function CalculationDetail({
   roundingLabel: string;
   method: ParticipationMethod;
   portionDisplay: PortionDisplay;
+  /** Reparto por sectores: cada sector es un pozo (su gente se agrupa por el nombre del puesto). */
+  sectors?: readonly SectorStageView[] | null;
 }) {
   const [open, setOpen] = useState(false);
   if (rows.length === 0 || totalWeightE8 === 0n) return null;
   const one = 10n ** BigInt(WEIGHT_SCALE);
-  const unitValue = (totalCents * one * 2n + totalWeightE8) / (totalWeightE8 * 2n);
+  const valueOf = (cents: bigint, weightE8: bigint) =>
+    weightE8 === 0n ? 0n : (cents * one * 2n + weightE8) / (weightE8 * 2n);
   const inputs = (row: DetailRow) =>
     weightInputsText({ ...row, hours: formatHoursE2(row.hoursE2) }, portionDisplay);
+  const pools = sectors
+    ? sectors
+        .flatMap((stage) => stage.sectors)
+        .map((sector) => {
+          const members = rows.filter((r) => r.positionName === sector.name);
+          const weightE8 = members.reduce((sum, r) => sum + r.weightE8, 0n);
+          const cents = BigInt(sector.amountCents);
+          return { key: sector.id, name: sector.name, cents, weightE8, members };
+        })
+        .filter((pool) => pool.members.length > 0)
+    : [{ key: 'pozo', name: '', cents: totalCents, weightE8: totalWeightE8, members: rows }];
+  const personLine = (row: DetailRow, value: bigint) => (
+    <li key={row.employeeId} className="py-2">
+      <p className="font-medium">
+        {row.name} <span className="font-normal text-muted-foreground">· {row.positionName}</span>
+      </p>
+      <p className="tabular text-muted-foreground">
+        {inputs(row)} = {formatWeight(row.weightE8)} de ponderado → {formatWeight(row.weightE8)} ×{' '}
+        {formatMoney(value)} ≈{' '}
+        <span className="text-foreground">{formatMoney(row.amountCents)}</span>
+        {row.advanceCents > 0n ? (
+          <>
+            {' '}
+            − adelanto {formatMoney(row.advanceCents)} ={' '}
+            <span className="font-medium text-foreground">{formatMoney(row.finalCents)}</span>
+          </>
+        ) : null}
+      </p>
+    </li>
+  );
   return (
     <div className="rounded-xl border bg-card">
       <button
@@ -67,50 +102,48 @@ export function CalculationDetail({
       </button>
       {open ? (
         <div className="space-y-4 border-t px-4 py-4 text-sm">
-          <p className="text-muted-foreground">
-            El <strong className="text-foreground">ponderado</strong> de cada persona es{' '}
-            {EXPLANATION[method]}. La propina se reparte en proporción al ponderado de cada persona
-            (su <strong className="text-foreground">participación</strong>) y se redondea a{' '}
-            {roundingLabel} de forma que la suma dé exacto el total.
-          </p>
-          <dl className="grid grid-cols-1 gap-2 rounded-lg bg-muted/50 p-3 sm:grid-cols-3">
-            <div>
-              <dt className="text-xs text-muted-foreground">Propina a repartir</dt>
-              <dd className="tabular font-medium">{formatMoney(totalCents)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Ponderado total</dt>
-              <dd className="tabular font-medium">{formatWeight(totalWeightE8)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Valor de 1 de ponderado</dt>
-              <dd className="tabular font-medium">{formatMoney(unitValue)}</dd>
-            </div>
-          </dl>
-          <ul className="divide-y">
-            {rows.map((row) => (
-              <li key={row.employeeId} className="py-2">
-                <p className="font-medium">
-                  {row.name}{' '}
-                  <span className="font-normal text-muted-foreground">· {row.positionName}</span>
-                </p>
-                <p className="tabular text-muted-foreground">
-                  {inputs(row)} = {formatWeight(row.weightE8)} de ponderado →{' '}
-                  {formatWeight(row.weightE8)} × {formatMoney(unitValue)} ≈{' '}
-                  <span className="text-foreground">{formatMoney(row.amountCents)}</span>
-                  {row.advanceCents > 0n ? (
-                    <>
-                      {' '}
-                      − adelanto {formatMoney(row.advanceCents)} ={' '}
-                      <span className="font-medium text-foreground">
-                        {formatMoney(row.finalCents)}
-                      </span>
-                    </>
-                  ) : null}
-                </p>
-              </li>
-            ))}
-          </ul>
+          {sectors ? (
+            <p className="text-muted-foreground">
+              Primero se calcula cuánto recibe cada{' '}
+              <strong className="text-foreground">sector</strong> (etapa por etapa, arriba).
+              Después, dentro de cada sector, el{' '}
+              <strong className="text-foreground">ponderado</strong> de cada persona es{' '}
+              {EXPLANATION[method]} y el monto del sector se reparte en proporción, redondeado a{' '}
+              {roundingLabel} para que la suma dé exacto.
+            </p>
+          ) : (
+            <p className="text-muted-foreground">
+              El <strong className="text-foreground">ponderado</strong> de cada persona es{' '}
+              {EXPLANATION[method]}. La propina se reparte en proporción al ponderado de cada
+              persona (su <strong className="text-foreground">participación</strong>) y se redondea
+              a {roundingLabel} de forma que la suma dé exacto el total.
+            </p>
+          )}
+          {pools.map((pool) => {
+            const value = valueOf(pool.cents, pool.weightE8);
+            return (
+              <div key={pool.key} className="space-y-2">
+                {sectors ? <p className="font-medium">{pool.name}</p> : null}
+                <dl className="grid grid-cols-1 gap-2 rounded-lg bg-muted/50 p-3 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">
+                      {sectors ? 'Monto del sector' : 'Propina a repartir'}
+                    </dt>
+                    <dd className="tabular font-medium">{formatMoney(pool.cents)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Ponderado total</dt>
+                    <dd className="tabular font-medium">{formatWeight(pool.weightE8)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Valor de 1 de ponderado</dt>
+                    <dd className="tabular font-medium">{formatMoney(value)}</dd>
+                  </div>
+                </dl>
+                <ul className="divide-y">{pool.members.map((row) => personLine(row, value))}</ul>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>

@@ -169,10 +169,11 @@ export const PARAMS: readonly ParamDefinition[] = [
       },
       {
         value: 'PORCENTAJE_POR_GRUPO',
-        label: 'Porcentaje por grupo',
+        label: 'Por sectores, en etapas',
         description:
-          'Cada grupo recibe un % y dentro del grupo se reparte según el ponderado. Hay que definir qué pasa si un grupo no trabajó.',
-        supported: false,
+          'Cada puesto es un sector con un %. La etapa 1 (p. ej. Cocina) se calcula sobre el total; cada etapa siguiente, sobre el saldo que queda. Dentro de cada sector se reparte según el ponderado. Se configura en "Reparto por sectores".',
+        supported: true,
+        databaseOnly: true,
       },
     ],
     library:

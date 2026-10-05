@@ -136,7 +136,8 @@ async function period(r: R, date: string, close = true, total = '100.000') {
   return settlementId;
 }
 
-const all = parseHistoryFilters({});
+// Cerrados y eliminados (sin estado, el historial muestra solo los cerrados).
+const all = parseHistoryFilters({ estado: 'TODOS' });
 
 describe('historial: lista', () => {
   it('solo repartos cerrados/anulados del restaurante, del más nuevo al más viejo', async () => {
@@ -175,9 +176,11 @@ describe('historial: lista', () => {
       (await listHistory(db, as, parseHistoryFilters(params))).items.map((i) => i.settlementId);
     expect(await ids({ estado: 'VOIDED' })).toEqual([a]);
     expect(await ids({ estado: 'CLOSED' })).toEqual([b]);
-    expect(await ids({ desde: '2025-05-10' })).toEqual([b]);
-    expect(await ids({ hasta: '2025-05-10' })).toEqual([a]);
-    expect(await ids({ persona: 'bet' })).toEqual([b, a]);
+    // Sin estado: solo los cerrados (los eliminados/anulados se piden explícitamente).
+    expect(await ids({})).toEqual([b]);
+    expect(await ids({ estado: 'TODOS', desde: '2025-05-10' })).toEqual([b]);
+    expect(await ids({ estado: 'TODOS', hasta: '2025-05-10' })).toEqual([a]);
+    expect(await ids({ estado: 'TODOS', persona: 'bet' })).toEqual([b, a]);
     // Carla no participó (0 h): no aparece por su nombre.
     expect(await ids({ persona: 'Carla' })).toEqual([]);
   });

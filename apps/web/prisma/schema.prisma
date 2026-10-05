@@ -86,6 +86,9 @@ enum PotSources {
 /// Estructura del pozo: pozo único (reemplaza a restaurants.pool_mode).
 enum PoolStructure {
   SINGLE_POOL
+  /// Por sectores, en etapas: cada puesto es un sector con etapa y %; la etapa 1 sobre el total,
+  /// las siguientes sobre el saldo (policy_version_positions.stage / stage_percent).
+  STAGED_SECTORS
 
   @@map("pool_structure")
 }
@@ -240,6 +243,8 @@ model User {
   paymentEventsPerformed    WeeklyPaymentEvent[]        @relation("PaymentEventPerformedBy")
   paymentEventsAuthorized   WeeklyPaymentEvent[]        @relation("PaymentEventAuthorizedBy")
   auditLogs                 AuditLog[]
+  feedbackSent              Feedback[]                  @relation("FeedbackSentBy")
+  feedbackStatusChanged     Feedback[]                  @relation("FeedbackStatusChangedBy")
 
   @@map("users")
 }
@@ -805,11 +810,15 @@ model DistributionPolicyVersion {
 
 /// Los puestos de una versión con su porción por hora. Solo se insertan junto con su versión.
 model PolicyVersionPosition {
-  versionId  String  @map("version_id") @db.Uuid
-  positionId String  @map("position_id") @db.Uuid
+  versionId    String   @map("version_id") @db.Uuid
+  positionId   String   @map("position_id") @db.Uuid
   /// Porción por hora (> 0). 10 decimales: representa 0,65 ÷ 45 y preserva los resultados de Library.
-  portion    Decimal @db.Decimal(20, 10)
-  sortOrder  Int     @default(0) @map("sort_order")
+  portion      Decimal  @db.Decimal(20, 10)
+  sortOrder    Int      @default(0) @map("sort_order")
+  /// Reparto por sectores: etapa del puesto (1 = sobre el total; 2… = sobre el saldo). NULL sin asignar.
+  stage        Int?     @db.SmallInt
+  /// Reparto por sectores: % de la base de su etapa (0 < % ≤ 100). NULL sin asignar.
+  stagePercent Decimal? @map("stage_percent") @db.Decimal(5, 2)
 
   version  DistributionPolicyVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
   position Position                  @relation(fields: [positionId], references: [id], onDelete: Restrict)
@@ -882,4 +891,51 @@ model AuditLog {
   @@index([restaurantId, createdAt])
   @@index([entity, entityId])
   @@map("audit_log")
+}
+
+// ─────────────────────── Comentarios de testers ───────────────────────
+
+/// Tipo de comentario que deja quien prueba GUTIP.
+enum FeedbackCategory {
+  BUG
+  SUGGESTION
+  COMMENT
+
+  @@map("feedback_category")
+}
+
+/// Estado de un comentario en la revisión del equipo de GUTIP.
+enum FeedbackStatus {
+  NEW
+  IN_REVIEW
+  RESOLVED
+
+  @@map("feedback_status")
+}
+
+/// Comentarios y sugerencias de quienes prueban GUTIP. No es de un restaurante: es sobre la app.
+/// Se puede enviar sin cuenta (user_id NULL); con sesión se asocia al usuario. No guarda IP ni
+/// navegador. Lo revisan los emails de GUTIP_FEEDBACK_REVIEWERS, que pueden borrarlo.
+model Feedback {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category          FeedbackCategory
+  /// Título opcional (1–120 caracteres).
+  title             String?
+  /// Descripción (10–4000 caracteres).
+  description       String
+  /// Pantalla desde la que se envió ("/reparto"), opcional.
+  page              String?
+  status            FeedbackStatus   @default(NEW)
+  userId            String?          @map("user_id") @db.Uuid
+  statusChangedAt   DateTime?        @map("status_changed_at") @db.Timestamptz(6)
+  statusChangedById String?          @map("status_changed_by") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user            User? @relation("FeedbackSentBy", fields: [userId], references: [id], onDelete: Restrict)
+  statusChangedBy User? @relation("FeedbackStatusChangedBy", fields: [statusChangedById], references: [id], onDelete: Restrict)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@map("feedback")
 }

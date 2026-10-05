@@ -30,6 +30,8 @@ import { methodUses } from '@/lib/distribution/participation';
 import { buildPeriodPreview, parseHours, type PreviewRow } from '@/lib/distribution/period-preview';
 import { formatHoursE2, METHOD_LABEL, type OpenPeriodView } from '@/lib/distribution/period-view';
 import { cn } from '@/lib/utils';
+import { SectorBreakdown } from '@/components/distribution/sector-breakdown';
+import { stagesToView } from '@/lib/distribution/sector-snapshot';
 import { AdvancesSection } from './advances-section';
 import { CalculationDetail } from './calculation-detail';
 
@@ -99,14 +101,18 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
         totalCents: tipsInvalid ? 0n : tipsCents,
         unitCents,
         method: view.method,
+        sectors: view.sectors,
         people: view.people.map((p) => ({
           ...p,
           hours: (hours[p.employeeId] ?? '').trim() === '' ? null : (hours[p.employeeId] ?? ''),
           advanceCents: BigInt(p.advanceCents),
         })),
       }),
-    [tipsInvalid, tipsCents, unitCents, view.method, view.people, hours],
+    [tipsInvalid, tipsCents, unitCents, view.method, view.sectors, view.people, hours],
   );
+  const sectorView = preview.sectors
+    ? stagesToView(preview.sectors.stages, preview.sectors.people)
+    : null;
   const rowById = new Map(preview.rows.map((r) => [r.employeeId, r]));
 
   async function track(task: () => Promise<{ ok: boolean; error?: string }>) {
@@ -268,6 +274,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
         onBack={() => setPhase('edit')}
         onClose={close}
       >
+        {sectorView ? <SectorsCard stages={sectorView} /> : null}
         <CalculationDetail
           rows={detailRows}
           totalCents={preview.totalCents}
@@ -275,6 +282,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
           roundingLabel={roundingLabel}
           method={view.method}
           portionDisplay={view.portionDisplay}
+          sectors={sectorView}
         />
       </ReviewStep>
     );
@@ -293,8 +301,8 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
             la propina y las horas: el resultado se calcula solo.
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Método de participación: {METHOD_LABEL[view.method]} (versión {view.policyVersion} de la
-            configuración).
+            {view.sectors ? 'Reparto por sectores, en etapas · ' : ''}Método de participación:{' '}
+            {METHOD_LABEL[view.method]} (versión {view.policyVersion} de la configuración).
           </p>
         </div>
         <SaveIndicator state={save} readOnly={readOnly} />
@@ -492,6 +500,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
           <ResultCard
             preview={preview}
             peopleCount={preview.rows.length}
+            sectors={sectorView ? <SectorsCard stages={sectorView} /> : null}
             detail={
               <CalculationDetail
                 rows={detailRows}
@@ -500,6 +509,7 @@ export function PeriodEditor({ view }: { view: OpenPeriodView }) {
                 roundingLabel={roundingLabel}
                 method={view.method}
                 portionDisplay={view.portionDisplay}
+                sectors={sectorView}
               />
             }
           />
@@ -649,13 +659,31 @@ function HoursRow({
   );
 }
 
+function SectorsCard({ stages }: { stages: Parameters<typeof SectorBreakdown>[0]['stages'] }) {
+  return (
+    <Card className="mb-4 gap-3">
+      <CardHeader>
+        <CardTitle>Reparto por sectores</CardTitle>
+        <CardDescription>
+          Cuánto recibe cada sector y sobre qué base se calcula cada porcentaje.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <SectorBreakdown stages={stages} />
+      </CardContent>
+    </Card>
+  );
+}
+
 function ResultCard({
   preview,
   peopleCount,
+  sectors,
   detail,
 }: {
   preview: ReturnType<typeof buildPeriodPreview>;
   peopleCount: number;
+  sectors: React.ReactNode;
   detail: React.ReactNode;
 }) {
   return (
@@ -695,7 +723,7 @@ function ResultCard({
           {preview.hourValues.length > 0 ? (
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="mb-1 text-xs font-medium text-muted-foreground">
-                Esta semana, una hora vale:
+                Esta semana, una hora vale{preview.sectors ? ' (en cada sector)' : ''}:
               </p>
               <ul className="space-y-0.5">
                 {preview.hourValues.map((h) => (
@@ -724,6 +752,7 @@ function ResultCard({
           )}
         </CardContent>
       </Card>
+      {sectors}
       {detail}
     </div>
   );

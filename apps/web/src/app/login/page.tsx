@@ -42,6 +42,13 @@ export default async function LoginPage({
           <Link href="/registro" className="font-medium text-primary hover:underline">
             Creá una
           </Link>
+          <span className="mt-2 block">
+            ¿Estás probando GUTIP?{' '}
+            <Link href="/feedback" className="font-medium text-primary hover:underline">
+              Dejanos un comentario
+            </Link>{' '}
+            (sin cuenta).
+          </span>
         </>
       }
     >

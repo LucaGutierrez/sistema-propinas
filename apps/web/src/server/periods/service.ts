@@ -25,6 +25,7 @@ import {
   type ParticipationMethod,
 } from '@/lib/distribution/participation';
 import { FORMULA_STATUS } from '@/lib/distribution/provisional-formula';
+import { stagesToView } from '@/lib/distribution/sector-snapshot';
 import { formatScaled } from '@/lib/decimal';
 import { assertRole, type AccessContext } from '../access/access';
 import { CAN, roleAllowed } from '../access/roles';
@@ -49,8 +50,11 @@ import type {
  */
 export const CALC_VERSION = 'provisional-1';
 export const CALC_VERSION_WITH_POINTS = 'provisional-2';
+/** Por sectores, en etapas (cada sector es un pozo dentro del que se aplica el método). */
+export const CALC_VERSION_SECTORS = 'sectores-1';
 
-export function calcVersionFor(method: ParticipationMethod): string {
+export function calcVersionFor(method: ParticipationMethod, staged = false): string {
+  if (staged) return `${CALC_VERSION_SECTORS}+${calcVersionFor(method)}`;
   return method === 'BY_POSITION' ? CALC_VERSION : CALC_VERSION_WITH_POINTS;
 }
 
@@ -653,6 +657,7 @@ export async function closePeriod(
       totalCents: data.tips.totalCents,
       unitCents: data.unitCents,
       method: data.method,
+      sectors: data.sectors,
       people: data.people,
     });
     if (!preview.canClose) {
@@ -665,7 +670,7 @@ export async function closePeriod(
     // con la porción de la versión de la política del período. El snapshot guarda SOLO lo que el
     // método usó: la porción (si interviene) y los puntos individuales (si intervienen).
     const uses = methodUses(data.method);
-    const calcVersion = calcVersionFor(data.method);
+    const calcVersion = calcVersionFor(data.method, data.sectors !== null);
     const portions = new Map(data.policy.positions.map((p) => [p.positionId, p]));
     const positionOf = new Map(data.people.map((p) => [p.employeeId, p.positionId]));
     const worked = preview.rows.filter((r) => r.state === 'worked');
@@ -688,8 +693,13 @@ export async function closePeriod(
           hours: decimalText(row.hoursE2 ?? 0n, 2),
           // Ponderado exacto (E8). Con BY_POSITION es el mismo número que antes (horas × porción).
           points: decimalText(row.weightE8, WEIGHT_SCALE),
+          // Participación como fracción 0..1: del ponderado total con pozo único; con sectores,
+          // del importe sobre el total (los ponderados de sectores distintos no se comparan).
           percentage: decimalText(
-            (row.weightE8 * 1_000_000n * 2n + preview.totalWeightE8) / (preview.totalWeightE8 * 2n),
+            preview.sectors
+              ? (row.amountCents * 1_000_000n * 2n + preview.totalCents) / (preview.totalCents * 2n)
+              : (row.weightE8 * 1_000_000n * 2n + preview.totalWeightE8) /
+                  (preview.totalWeightE8 * 2n),
             6,
           ),
           amountCents: row.amountCents,
@@ -801,11 +811,18 @@ export async function closePeriod(
           roundingUnit: data.policy.columns.roundingUnit,
           // Método de participación usado (los puntos de cada persona quedan en su ítem).
           portionMode: data.policy.columns.portionMode,
+          poolStructure: data.policy.columns.poolStructure,
           positions: data.policy.positions.map((p) => ({
             positionId: p.positionId,
             name: p.name,
             portion: p.portion,
+            stage: p.stage,
+            stagePercent: p.stagePercent,
           })),
+          // Por sectores: cada etapa con su base y el monto de cada sector (lo lee el historial).
+          ...(preview.sectors
+            ? { sectorStages: stagesToView(preview.sectors.stages, preview.sectors.people) }
+            : {}),
           // Cómo se mostraba la porción al cerrar (solo auditoría: no interviene en el cálculo).
           portionDisplay: restaurant?.portionDisplay ?? 'DECIMAL',
           formula: FORMULA_STATUS,

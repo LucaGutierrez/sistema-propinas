@@ -5,6 +5,7 @@ import { getActiveAccess } from '@/server/access/request';
 import { ROLE_LABEL } from '@/server/access/roles';
 import { getSessionUser } from '@/server/auth/session';
 import { databaseEnabled } from '@/server/context';
+import { isFeedbackReviewer } from '@/server/feedback/service';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -28,12 +29,19 @@ async function shellAccount(): Promise<ShellAccount | null> {
   const user = await getSessionUser();
   if (!user) return null;
   const active = await getActiveAccess();
+  const feedbackReviewer = isFeedbackReviewer(user);
   if (!active.ok)
-    return { userName: user.name, roleLabel: 'Sin restaurante', restaurantName: null };
+    return {
+      userName: user.name,
+      roleLabel: 'Sin restaurante',
+      restaurantName: null,
+      feedbackReviewer,
+    };
   return {
     userName: user.name,
     roleLabel: ROLE_LABEL[active.access.role],
     restaurantName: active.access.restaurantName,
+    feedbackReviewer,
   };
 }
 

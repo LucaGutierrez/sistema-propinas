@@ -30,7 +30,11 @@ describe('modo base de datos: sin demo', () => {
       '/personal',
       '/configuracion',
     ]);
-    expect(DATABASE_ACCOUNT_NAV.map((i) => i.href)).toEqual(['/cuenta', '/crear-restaurante']);
+    expect(DATABASE_ACCOUNT_NAV.map((i) => i.href)).toEqual([
+      '/cuenta',
+      '/crear-restaurante',
+      '/feedback',
+    ]);
   });
 
   it('ninguna pantalla de la demo aparece en el menú', () => {

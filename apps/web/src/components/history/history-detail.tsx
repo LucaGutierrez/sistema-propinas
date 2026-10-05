@@ -9,6 +9,7 @@ import { EVENT_LABEL, STATUS_LABEL } from '@/lib/envelopes/view';
 import { formatWeight, METHOD_LABEL, weightInputsText } from '@/lib/distribution/period-view';
 import type { HistoryDetail, HistoryEvent, HistoryPersonRow } from '@/lib/history/view';
 import type { PortionDisplay } from '@/lib/policy/portion-format';
+import { SectorBreakdown } from '@/components/distribution/sector-breakdown';
 import { PeriodActions } from './period-actions';
 
 const dateTime = new Intl.DateTimeFormat('es-AR', {
@@ -132,13 +133,33 @@ export function HistoryDetailView({ detail }: { detail: HistoryDetail }) {
           <Tile label="Propina repartida" value={money(totals.tipsCents)} strong />
           <Tile label="Adelantos descontados" value={money(totals.advancesCents)} />
           <Tile label="Personas" value={String(totals.participants)} />
-          <Tile
-            label="Ponderado · valor de 1"
-            value={`${formatWeight(BigInt(totals.weightE8))} · ${
-              pointValue === null ? '—' : formatMoney(pointValue)
-            }`}
-          />
+          {detail.sectorStages ? (
+            <Tile label="Cálculo" value="Por sectores, en etapas" />
+          ) : (
+            <Tile
+              label="Ponderado · valor de 1"
+              value={`${formatWeight(BigInt(totals.weightE8))} · ${
+                pointValue === null ? '—' : formatMoney(pointValue)
+              }`}
+            />
+          )}
         </div>
+      ) : null}
+
+      {detail.sectorStages ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Resultado por sector</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              La configuración aplicada al cerrar (etapa, base y porcentaje de cada sector) y lo que
+              recibió cada uno. Dentro de cada sector se repartió entre su gente según el detalle
+              por persona.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <SectorBreakdown stages={detail.sectorStages} />
+          </CardContent>
+        </Card>
       ) : null}
 
       {/* Detalle por persona */}

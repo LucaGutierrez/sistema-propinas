@@ -14,6 +14,7 @@
 import { parseDecimal } from '@/lib/decimal';
 import { SEED_POSITIONS } from '@/lib/demo/data';
 import { FACTOR_SCALE } from '@/lib/distribution/provisional-formula';
+import { checkStages } from '@/lib/distribution/sector-stages';
 import {
   PARAMS,
   STANDARD_VALUES,
@@ -146,6 +147,17 @@ export function policyGaps(version: PolicyVersion): string[] {
     if (factor === null || factor === 0n) {
       gaps.push(`Puesto ${position.name}: falta una porción válida (mayor que cero).`);
     }
+  }
+  if (version.values.groups === 'PORCENTAJE_POR_GRUPO' && version.positions.length > 0) {
+    const check = checkStages(
+      version.positions.map((p) => ({
+        id: p.id,
+        name: p.name,
+        stage: p.stage ?? null,
+        percent: p.stagePercent ?? null,
+      })),
+    );
+    if (!check.ok) gaps.push(...check.errors.map((e) => `Reparto por sectores: ${e}`));
   }
   return gaps;
 }
