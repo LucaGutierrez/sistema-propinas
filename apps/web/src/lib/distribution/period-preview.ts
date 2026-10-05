@@ -31,6 +31,8 @@ import { FACTOR_SCALE, HOURS_SCALE } from './provisional-formula';
 import {
   checkStages,
   computeStages,
+  formatStagePercent,
+  unassignedCents,
   type SectorAssignment,
   type StageResult,
 } from './sector-stages';
@@ -108,6 +110,7 @@ export type PreviewIssueCode =
   | 'NO_HOURS'
   | 'SECTORS_CONFIG'
   | 'EMPTY_SECTOR'
+  | 'UNASSIGNED'
   | 'ROUNDING';
 
 export interface PreviewIssue {
@@ -402,6 +405,18 @@ export function buildPeriodPreview(input: {
                 .join(
                   ' ',
                 )} Cargá las horas de su gente o revisá los porcentajes en Configuración: esa plata no pasa a otros sectores.`,
+            ),
+          );
+        }
+        // Lo que la última etapa no reparte queda sin asignar: se muestra y no pasa a nadie. El
+        // cierre registra cada peso del total, así que con plata sin asignar no se puede cerrar.
+        const unassigned = unassignedCents(stages);
+        const lastStage = stages[stages.length - 1];
+        if (unassigned > 0n && lastStage) {
+          issues.push(
+            issue(
+              'UNASSIGNED',
+              `Quedan ${formatMoney(unassigned)} sin asignar: la etapa ${lastStage.number} reparte el ${formatStagePercent(lastStage.percentE2)} % de ${formatMoney(lastStage.baseCents)}. Esa plata no pasa a ningún sector. Para cerrar, ajustá los porcentajes en Configuración (la última etapa tiene que repartir el 100 %).`,
             ),
           );
         }

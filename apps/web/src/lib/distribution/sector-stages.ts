@@ -7,8 +7,9 @@
  *   ETAPA 1      base = TOTAL de la propina           p. ej. Cocina 30 % de $100.000 = $30.000
  *   ETAPA 2…N    base = SALDO que dejó la anterior    p. ej. Salón 60 % de $70.000 = $42.000
  *
- * Una etapa intermedia suma MENOS de 100 % de su base (lo que queda es la base de la siguiente) y la
- * última suma EXACTAMENTE 100 %: así se reparte todo y la suma de los sectores es el total.
+ * Cada etapa reparte SU porcentaje de su base, nunca más: una etapa intermedia suma MENOS de 100 %
+ * (lo que queda es la base de la siguiente) y la última suma hasta 100 %. Si la última suma menos,
+ * lo que queda es plata SIN ASIGNAR: se informa con su monto y no pasa a ningún sector.
  * Después, el monto de cada sector se reparte entre su gente con el motor de participación
  * (`computePool`): el sector es un pozo.
  *
@@ -122,10 +123,9 @@ export function checkStages(sectors: readonly SectorAssignment[]): StagesCheck {
         `La etapa ${number} suma ${formatStagePercent(sumE2)} % ${where} y después viene la etapa ${number + 1}: tiene que sumar menos de 100 % para que quede saldo.`,
       );
     }
-    if (number === last && sumE2 !== HUNDRED_E2) {
-      const diff = sumE2 < HUNDRED_E2 ? HUNDRED_E2 - sumE2 : sumE2 - HUNDRED_E2;
+    if (number === last && sumE2 > HUNDRED_E2) {
       errors.push(
-        `La última etapa (${number}) suma ${formatStagePercent(sumE2)} % ${where}: tiene que sumar exactamente 100 % para que se reparta todo (${sumE2 < HUNDRED_E2 ? 'faltan' : 'sobran'} ${formatStagePercent(diff)} %).`,
+        `La última etapa (${number}) suma ${formatStagePercent(sumE2)} % ${where}: no puede pasar de 100 % (sobran ${formatStagePercent(sumE2 - HUNDRED_E2)} %).`,
       );
     }
     stages.push({
@@ -160,7 +160,7 @@ export interface StageResult {
   percentE2: bigint;
   /** Lo que reparte la etapa entre sus sectores. */
   amountCents: bigint;
-  /** Saldo que queda para la etapa siguiente (0 en la última). */
+  /** Saldo que queda: base de la etapa siguiente o, en la última, lo que queda sin asignar. */
   remainderCents: bigint;
   sectors: SectorAmount[];
 }
@@ -191,8 +191,10 @@ function largestRemainder(units: bigint, weights: readonly bigint[]): bigint[] {
 }
 
 /**
- * Calcula cada etapa sobre su base. `stages` sale de `checkStages` (ya válido). La suma de los
- * sectores es exactamente `totalCents`, que tiene que ser múltiplo de la unidad de redondeo.
+ * Calcula cada etapa sobre su base. `stages` sale de `checkStages` (ya válido). Cada etapa reparte
+ * su porcentaje de la base (redondeado a la unidad), también la última: lo que deja la última es
+ * plata sin asignar (`unassignedCents`). Sectores + sin asignar = `totalCents`, que tiene que ser
+ * múltiplo de la unidad de redondeo.
  */
 export function computeStages(
   totalCents: bigint,
@@ -204,9 +206,8 @@ export function computeStages(
     throw new Error('El total tiene que ser múltiplo de la unidad de redondeo.');
   }
   let baseUnits = totalCents / unitCents;
-  return stages.map((stage, index) => {
-    const isLast = index === stages.length - 1;
-    const stageUnits = isLast ? baseUnits : divRoundHalfUp(baseUnits * stage.sumE2, HUNDRED_E2);
+  return stages.map((stage) => {
+    const stageUnits = divRoundHalfUp(baseUnits * stage.sumE2, HUNDRED_E2);
     const split = largestRemainder(
       stageUnits,
       stage.sectors.map((s) => s.percentE2),
@@ -230,6 +231,12 @@ export function computeStages(
     baseUnits -= stageUnits;
     return result;
   });
+}
+
+/** Plata que la última etapa deja sin asignar (0 si la última suma 100 %). */
+export function unassignedCents(stages: readonly { remainderCents: bigint | string }[]): bigint {
+  const last = stages[stages.length - 1];
+  return last ? BigInt(last.remainderCents) : 0n;
 }
 
 /** Resumen de una configuración válida: "Etapa 1 (sobre el total): Cocina 30 % · Etapa 2 …". */

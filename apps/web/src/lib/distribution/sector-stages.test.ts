@@ -6,6 +6,7 @@ import {
   computeStages,
   formatStagePercent,
   parseStagePercent,
+  unassignedCents,
   type SectorAssignment,
 } from './sector-stages';
 
@@ -83,17 +84,13 @@ describe('validación de la configuración por etapas', () => {
     ]);
   });
 
-  it('la última etapa tiene que sumar exactamente 100 % (dice cuánto falta o sobra)', () => {
-    const short = checkStages([sector('cocina', 1, '30', 'Cocina'), sector('salon', 2, '60')]);
-    expect(short).toEqual({
-      ok: false,
-      errors: [
-        'La última etapa (2) suma 60 % del saldo: tiene que sumar exactamente 100 % para que se reparta todo (faltan 40 %).',
-      ],
-    });
+  it('la última etapa suma hasta 100 % (menos es válido: el resto queda sin asignar)', () => {
+    expect(checkStages([sector('cocina', 1, '30', 'Cocina'), sector('salon', 2, '60')]).ok).toBe(
+      true,
+    );
     const over = checkStages([sector('a', 1, '70'), sector('b', 1, '40')]);
     expect(over.ok ? [] : over.errors).toEqual([
-      'La última etapa (1) suma 110 % del total: tiene que sumar exactamente 100 % para que se reparta todo (sobran 10 %).',
+      'La última etapa (1) suma 110 % del total: no puede pasar de 100 % (sobran 10 %).',
     ]);
   });
 
@@ -125,6 +122,70 @@ describe('cálculo por etapas', () => {
       super: 1_050_000n,
       bacha: 700_000n,
     });
+  });
+
+  it('caso pedido: $100.000, cocina 30 %, salón 90 % de $70.000, bacha 100 % del remanente', () => {
+    const stages = computeStages(
+      10_000_000n,
+      plan([
+        sector('cocina', 1, '30', 'Cocina'),
+        sector('salon', 2, '90', 'Salón'),
+        sector('bacha', 3, '100', 'Bacha'),
+      ]),
+    );
+    expect(
+      stages.map((s) => [
+        s.number,
+        s.base,
+        s.baseCents,
+        s.percentE2,
+        s.amountCents,
+        s.remainderCents,
+      ]),
+    ).toEqual([
+      [1, 'TOTAL', 10_000_000n, 3000n, 3_000_000n, 7_000_000n], // Cocina: 30 % de $100.000
+      [2, 'REMAINDER', 7_000_000n, 9000n, 6_300_000n, 700_000n], // Salón: 90 % de $70.000
+      [3, 'REMAINDER', 700_000n, 10000n, 700_000n, 0n], // Bacha: 100 % de $7.000
+    ]);
+    expect(amounts(stages)).toEqual({ cocina: 3_000_000n, salon: 6_300_000n, bacha: 700_000n });
+    expect(unassignedCents(stages)).toBe(0n);
+  });
+
+  it('salón repartido en camareros, barra y supervisores: cada uno sobre los $70.000', () => {
+    const stages = computeStages(
+      10_000_000n,
+      plan([
+        sector('cocina', 1, '30', 'Cocina'),
+        sector('salon', 2, '60', 'Camareros'),
+        sector('barra', 2, '20', 'Barra'),
+        sector('super', 2, '10', 'Supervisores'),
+        sector('bacha', 3, '100', 'Bacha'),
+      ]),
+    );
+    expect(amounts(stages)).toEqual({
+      cocina: 3_000_000n,
+      salon: 4_200_000n, // 60 % de $70.000
+      barra: 1_400_000n, // 20 % de $70.000
+      super: 700_000n, // 10 % de $70.000
+      bacha: 700_000n, // 100 % de los $7.000 que quedan
+    });
+    expect(stages[1]?.amountCents).toBe(6_300_000n);
+  });
+
+  it('bacha con menos de 100 %: usa su porcentaje y el resto queda sin asignar (no se mueve)', () => {
+    const stages = computeStages(
+      10_000_000n,
+      plan([
+        sector('cocina', 1, '30', 'Cocina'),
+        sector('salon', 2, '90', 'Salón'),
+        sector('bacha', 3, '50', 'Bacha'),
+      ]),
+    );
+    expect(amounts(stages)).toEqual({ cocina: 3_000_000n, salon: 6_300_000n, bacha: 350_000n });
+    expect(stages[2]?.baseCents).toBe(700_000n); // la base sigue siendo el remanente de $7.000
+    expect(unassignedCents(stages)).toBe(350_000n);
+    const all = stages.flatMap((s) => s.sectors).reduce((sum, s) => sum + s.amountCents, 0n);
+    expect(all + unassignedCents(stages)).toBe(10_000_000n);
   });
 
   it('la suma de los sectores es siempre el total exacto, en la unidad de redondeo', () => {
@@ -202,18 +263,58 @@ describe('reparto de un período por sectores', () => {
     expect(preview.hourValues.find((h) => h.positionName === 'Cocina')?.centsPerHour).toBe(50_000n);
   });
 
+  it('caso pedido en el cierre: cocina $30.000, salón $63.000 y bacha $7.000', () => {
+    const preview = buildPeriodPreview({
+      totalCents: 10_000_000n,
+      unitCents: 100n,
+      sectors: [
+        sector('cocina', 1, '30', 'Cocina'),
+        sector('salon', 2, '90', 'Salón'),
+        sector('bacha', 3, '100', 'Bacha'),
+      ],
+      people: [
+        person('ana', 'cocina', '40'),
+        person('carla', 'salon', '45'),
+        person('fede', 'bacha', '35'),
+      ],
+    });
+    expect(preview.issues).toEqual([]);
+    expect(preview.canClose).toBe(true);
+    expect(Object.fromEntries(preview.rows.map((r) => [r.employeeId, r.amountCents]))).toEqual({
+      ana: 3_000_000n,
+      carla: 6_300_000n,
+      fede: 700_000n,
+    });
+  });
+
+  it('con plata sin asignar muestra cuánto y no deja cerrar (no la reparte a nadie)', () => {
+    const preview = buildPeriodPreview({
+      totalCents: 10_000_000n,
+      unitCents: 1n,
+      sectors: RESTAURANT.map((s) => (s.id === 'bacha' ? { ...s, percent: '50' } : s)),
+      people,
+    });
+    expect(preview.canClose).toBe(false);
+    expect(preview.rows.find((r) => r.employeeId === 'fede')?.amountCents).toBe(350_000n);
+    expect(preview.rows.find((r) => r.employeeId === 'carla')?.amountCents).toBe(3_500_000n);
+    expect(unassignedCents(preview.sectors?.stages ?? [])).toBe(350_000n);
+    expect(preview.issues.map((i) => i.message)).toEqual([
+      'Quedan $ 3.500,00 sin asignar: la etapa 3 reparte el 50 % de $ 7.000,00. Esa plata no pasa a ningún sector. Para cerrar, ajustá los porcentajes en Configuración (la última etapa tiene que repartir el 100 %).',
+    ]);
+  });
+
   it('con la configuración incompleta no calcula y dice qué falta', () => {
     const preview = buildPeriodPreview({
       totalCents: 10_000_000n,
       unitCents: 1n,
-      sectors: [sector('cocina', 1, '30', 'Cocina'), sector('salon', 2, '60', 'Salón')],
+      sectors: [sector('cocina', 1, '30', 'Cocina'), sector('salon', 2, null, 'Salón')],
       people,
     });
     expect(preview.computed).toBe(false);
     expect(preview.canClose).toBe(false);
     expect(preview.issues.map((i) => i.code)).toContain('SECTORS_CONFIG');
     expect(preview.issues.find((i) => i.code === 'SECTORS_CONFIG')?.message).toContain(
-      'faltan 40 %',
+      'Salón: falta el porcentaje.',
     );
   });
 

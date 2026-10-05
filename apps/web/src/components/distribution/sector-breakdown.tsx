@@ -1,11 +1,16 @@
-import { ArrowDownIcon } from 'lucide-react';
+import { ArrowDownIcon, TriangleAlertIcon } from 'lucide-react';
 import { formatMoney } from '@/lib/decimal';
 import type { SectorStageView } from '@/lib/distribution/sector-snapshot';
-import { formatStagePercent, stageBaseLabel } from '@/lib/distribution/sector-stages';
+import {
+  formatStagePercent,
+  stageBaseLabel,
+  unassignedCents,
+} from '@/lib/distribution/sector-stages';
 
 /**
  * Reparto por sectores, etapa por etapa: sobre qué base se calcula cada porcentaje, cuánto recibe
- * cada sector y qué saldo pasa a la etapa siguiente. Lo usan la configuración (ejemplo), el reparto
+ * cada sector, qué saldo pasa a la etapa siguiente y cuánto queda sin asignar (si la última etapa
+ * reparte menos de 100 %). Lo usan la configuración (ejemplo), el reparto
  * en curso y el detalle de un reparto cerrado (desde su snapshot).
  */
 export function SectorBreakdown({
@@ -17,10 +22,12 @@ export function SectorBreakdown({
   showPeople?: boolean;
 }) {
   const total = stages.reduce((sum, s) => sum + BigInt(s.amountCents), 0n);
+  const unassigned = unassignedCents(stages);
   return (
     <ol className="space-y-2 text-sm">
-      {stages.map((stage) => {
+      {stages.map((stage, index) => {
         const remainder = BigInt(stage.remainderCents);
+        const isLast = index === stages.length - 1;
         return (
           <li key={stage.number}>
             <div className="rounded-lg border">
@@ -32,7 +39,9 @@ export function SectorBreakdown({
                   </span>
                 </span>
                 <span className="tabular text-xs text-muted-foreground">
-                  Base {formatMoney(BigInt(stage.baseCents))}
+                  Base {formatMoney(BigInt(stage.baseCents))} ·{' '}
+                  {formatStagePercent(BigInt(stage.percentE2))} % ={' '}
+                  {formatMoney(BigInt(stage.amountCents))}
                 </span>
               </p>
               <ul className="divide-y">
@@ -58,7 +67,7 @@ export function SectorBreakdown({
                 ))}
               </ul>
             </div>
-            {remainder > 0n ? (
+            {remainder > 0n && !isLast ? (
               <p className="flex items-center gap-1.5 px-3 pt-2 text-xs text-muted-foreground">
                 <ArrowDownIcon className="size-3.5" />
                 {formatMoney(BigInt(stage.baseCents))} − {formatMoney(BigInt(stage.amountCents))} =
@@ -76,6 +85,22 @@ export function SectorBreakdown({
         <span>Total repartido entre sectores</span>
         <span className="tabular">{formatMoney(total)}</span>
       </li>
+      {unassigned > 0n ? (
+        <li className="flex items-start justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 font-medium text-destructive">
+          <span className="flex items-start gap-1.5">
+            <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Sin asignar{' '}
+              <span className="font-normal">
+                ({formatMoney(BigInt(stages[stages.length - 1]?.baseCents ?? '0'))} −{' '}
+                {formatMoney(BigInt(stages[stages.length - 1]?.amountCents ?? '0'))}): no pasa a
+                ningún sector
+              </span>
+            </span>
+          </span>
+          <span className="tabular">{formatMoney(unassigned)}</span>
+        </li>
+      ) : null}
     </ol>
   );
 }

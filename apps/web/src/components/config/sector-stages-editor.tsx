@@ -141,9 +141,10 @@ export function SectorStagesEditor({
           Cada puesto es un sector. La <span className="font-medium">etapa 1</span> se calcula sobre
           el <span className="font-medium">total</span> de la propina (p. ej. Cocina 30 %). Cada
           etapa siguiente se calcula sobre el <span className="font-medium">saldo</span> que dejó la
-          anterior (p. ej. Salón, Barra y Supervisores; después Bacha). La última etapa tiene que
-          sumar 100 % para que se reparta todo. Dentro de cada sector, el monto se reparte entre su
-          gente según las horas y el método de participación.
+          anterior (p. ej. Salón, Barra y Supervisores; después Bacha). La última etapa reparte su
+          porcentaje del saldo: con 100 % se reparte todo; con menos, lo que queda se muestra como
+          sin asignar y no se puede cerrar el reparto hasta ajustarlo. Dentro de cada sector, el
+          monto se reparte entre su gente según las horas y el método de participación.
         </CardDescription>
         <CardAction>
           {active ? (
@@ -245,6 +246,7 @@ export function SectorStagesEditor({
             {sums.map((s) => {
               const closes =
                 s.stage === lastStage ? s.sumE2 === 10_000n : s.sumE2 > 0n && s.sumE2 < 10_000n;
+              const lastShort = s.stage === lastStage && s.sumE2 > 0n && s.sumE2 < 10_000n;
               return (
                 <li
                   key={s.stage}
@@ -256,7 +258,11 @@ export function SectorStagesEditor({
                   Etapa {s.stage}:{' '}
                   <span className="tabular font-medium">{formatStagePercent(s.sumE2)} %</span>{' '}
                   {s.stage === 1 ? 'del total' : 'del saldo'}
-                  {s.stage === lastStage ? ' (tiene que ser 100 %)' : ' (menos de 100 %)'}
+                  {s.stage !== lastStage
+                    ? ' (menos de 100 %)'
+                    : lastShort
+                      ? ` (queda ${formatStagePercent(10_000n - s.sumE2)} % sin asignar)`
+                      : ' (100 % reparte todo el saldo)'}
                 </li>
               );
             })}

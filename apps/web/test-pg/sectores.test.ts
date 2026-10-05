@@ -130,11 +130,11 @@ describe('configuración por sectores', () => {
     const r = await restaurant();
     const direct = await config(r, { kind: 'value', key: 'groups', value: 'PORCENTAJE_POR_GRUPO' });
     expect(direct.ok).toBe(false);
-    const { result } = await withKitchen(r, { ...PEDIDO, Bacha: [3, '90'] });
+    const { result } = await withKitchen(r, { ...PEDIDO, Salón: [2, '70'] });
     expect(result).toEqual({
       ok: false,
       error:
-        'La última etapa (3) suma 90 % del saldo: tiene que sumar exactamente 100 % para que se reparta todo (faltan 10 %).',
+        'La etapa 2 suma 110 % del saldo y después viene la etapa 3: tiene que sumar menos de 100 % para que quede saldo.',
     });
     const view = await loadDistributionConfig(db, await as(r.owner, CAN.viewDistributionConfig));
     // v1 estándar + v2 (Cocina): ninguna versión por sectores.
@@ -232,6 +232,76 @@ describe('reparto por sectores', () => {
         people: 2,
       },
     ]);
+  });
+
+  it('caso pedido: $100.000 → cocina $30.000, salón $63.000 (90 % de $70.000), bacha $7.000', async () => {
+    const r = await restaurant();
+    const { result } = await withKitchen(r, {
+      Cocina: [1, '30'],
+      Salón: [2, '60'],
+      Barra: [2, '20'],
+      Supervisor: [2, '10'],
+      Bacha: [3, '100'],
+    });
+    if (!result.ok) throw new Error(result.error);
+    const ids = await staff(r, [
+      ['Ana', 'Cocina'],
+      ['Caro', 'Salón'],
+      ['Dani', 'Barra'],
+      ['Eli', 'Supervisor'],
+      ['Fede', 'Bacha'],
+    ]);
+    const settlementId = await openWith(r, '100.000', {
+      [ids.Ana as string]: '40',
+      [ids.Caro as string]: '45',
+      [ids.Dani as string]: '30',
+      [ids.Eli as string]: '45',
+      [ids.Fede as string]: '35',
+    });
+    const closed = await close(r.owner, settlementId);
+    if (!closed.ok) throw new Error(closed.error);
+    const detail = await getClosedPeriodView(db, r.id, settlementId);
+    expect(
+      detail?.sectorStages?.map((s) => [s.number, s.baseCents, s.percentE2, s.amountCents]),
+    ).toEqual([
+      [1, '10000000', '3000', '3000000'], // Cocina: 30 % de $100.000
+      [2, '7000000', '9000', '6300000'], // Salón: 90 % de $70.000
+      [3, '700000', '10000', '700000'], // Bacha: 100 % de $7.000
+    ]);
+    expect(
+      Object.fromEntries(detail?.rows.map((row) => [row.name, row.amountCents]) ?? []),
+    ).toEqual({
+      Ana: '3000000',
+      Caro: '4200000',
+      Dani: '1400000',
+      Eli: '700000',
+      Fede: '700000',
+    });
+  });
+
+  it('bacha con menos de 100 % se guarda, muestra lo sin asignar y no deja cerrar', async () => {
+    const r = await restaurant();
+    const { result } = await withKitchen(r, { ...PEDIDO, Bacha: [3, '50'] });
+    if (!result.ok) throw new Error(result.error);
+    const ids = await staff(r, [
+      ['Ana', 'Cocina'],
+      ['Caro', 'Salón'],
+      ['Dani', 'Barra'],
+      ['Eli', 'Supervisor'],
+      ['Fede', 'Bacha'],
+    ]);
+    const settlementId = await openWith(r, '100.000', {
+      [ids.Ana as string]: '40',
+      [ids.Caro as string]: '45',
+      [ids.Dani as string]: '30',
+      [ids.Eli as string]: '45',
+      [ids.Fede as string]: '35',
+    });
+    const closed = await close(r.owner, settlementId);
+    expect(closed.ok).toBe(false);
+    if (!closed.ok) expect(closed.error).toContain('Quedan $ 3.500,00 sin asignar');
+    const settlement = await db.weeklySettlement.findUniqueOrThrow({ where: { id: settlementId } });
+    expect(settlement.closedAt).toBeNull();
   });
 
   it('un sector con monto y sin nadie con horas no deja cerrar', async () => {
